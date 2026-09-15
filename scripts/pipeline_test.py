@@ -31,6 +31,7 @@ sys.path.insert(0, str(ROOT))
 import app.translate as T  # noqa: E402
 from app import render, store  # noqa: E402
 from app.extract import extract_pdf  # noqa: E402
+from app import mathify as M  # noqa: E402
 from app.mock import MockClient  # noqa: E402
 from app.translate import _norm_ws  # noqa: E402
 
@@ -243,6 +244,33 @@ def main() -> None:
             print(f"\n  已清理测试文档 {doc_id}")
         else:
             print(f"\n  保留测试文档 {doc_id}（data/docs/{doc_id}）")
+
+        # ------------------------------------------------------------ 12
+        print("\n== 12. 无法辨认字形（PDF 字体表坏了）的处理 ==")
+        # 背景：CMEX10 等数学字体的字形常被映射成控制字符/私有区码位，
+        # 早期实现「静默丢弃」，导致公式少了括号、模型拿到残缺公式 → 翻译出错。
+        # 现在必须替换成显式占位符，交给模型按上下文还原。
+        mg = M.MISSING_GLYPH
+        check("控制字符被替换为占位符",
+              M.plain_text_escape("a\x10b") == f"a{mg}b", repr(M.plain_text_escape("a\x10b")))
+        check("私有区字符被替换为占位符",
+              M.plain_text_escape("\uf8ee") == mg, repr(M.plain_text_escape("\uf8ee")))
+        check("替换符 U+FFFD 被替换", M.plain_text_escape("\ufffd") == mg)
+        check("数学片段里同样处理",
+              "\x10" not in M.text_to_latex("\x10Y") and mg in M.text_to_latex("\x10Y"),
+              repr(M.text_to_latex("\x10Y")))
+        check("占位符可计数", M.count_missing_glyphs(f"x{mg}y{mg}") == 2)
+        check("正常字符不受影响", M.plain_text_escape("normal text") == "normal text")
+        # 端到端：整篇抽取结果里不允许残留控制字符/私有区
+        doc = extract_pdf(PDF, 1, 2)
+        joined = "\n".join(p["text"] for p in doc["paragraphs"])
+        residue = [c for c in joined
+                   if (ord(c) < 0x20 and c not in "\n\t") or 0xE000 <= ord(c) <= 0xF8FF
+                   or ord(c) == 0xFFFD]
+        check("整篇抽取无残留乱码码位", not residue, str(residue[:6]))
+        check("抽取结果带字形问题字段",
+              isinstance(doc.get("glyph_issues"), int) and "glyph_issue_ids" in doc,
+              f"glyph_issues={doc.get('glyph_issues')}")
 
     print(f"\n== 结果：{len(PASS)} 项通过，{len(FAIL)} 项失败 ==")
     if FAIL:

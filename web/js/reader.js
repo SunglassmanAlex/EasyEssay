@@ -21,6 +21,13 @@
     $('progress-bar').style.width = Math.round((p || 0) * 100) + '%';
   }
 
+  // 找出"含无法辨认字形（⟦?⟧）"的段落：这些段的公式必然有缺，需要让模型按上下文还原
+  function glyphBadIds(paragraphs) {
+    return paragraphs.filter(function (p) {
+      return p.glyph_issues || (p.text || '').indexOf('⟦?⟧') >= 0;
+    }).map(function (p) { return p.id; });
+  }
+
   function render(meta, paragraphs, translations, running) {
     var stats = meta.stats || {};
     document.title = (meta.title || 'EasyEssay') + ' · 中英对照';
@@ -66,6 +73,18 @@
         });
       }
     });
+
+    var badIds = glyphBadIds(paragraphs);
+    repairIds = badIds;
+    var btnRepair = $('btn-repair');
+    if (badIds.length) {
+      btnRepair.hidden = false;
+      btnRepair.textContent = '修复乱码段（' + badIds.length + '）';
+      btnRepair.title = '这 ' + badIds.length + ' 段里有 PDF 无法辨认的字形（⟦?⟧，多为矩阵/大括号），'
+        + '点一下只重译这些段，让模型按上下文还原公式；其它段不动';
+    } else {
+      btnRepair.hidden = true;
+    }
 
     buildToc(bapi.toc);
     setProgress(meta.progress || (stats.paragraphs ? (stats.translated / stats.paragraphs) : 0));
@@ -150,6 +169,22 @@
         toggleRunning(true);
         setTimeout(function () { load(true); }, 800);
       })
+      .catch(function (e) { api.toast(e.message, true); });
+  };
+
+  var repairIds = [];
+  $('btn-repair').onclick = function () {
+    var ids = [];
+    document.querySelectorAll('.brow').forEach(function (r) {
+      var cell = r.querySelector('.bcell.en');
+      if (cell && cell.textContent.indexOf('⟦?⟧') >= 0) ids.push(r.dataset.id);
+    });
+    if (!ids.length) ids = repairIds;
+    if (!ids.length) { api.toast('没有需要修复的段落'); return; }
+    if (!confirm('只重译这 ' + ids.length + ' 段（含无法辨认的字形），其它段落不动？')) return;
+    api.post('/api/docs/' + encodeURIComponent(docId) + '/translate',
+             { only_ids: ids, force: true })
+      .then(function () { api.toast('已开始修复 ' + ids.length + ' 段'); toggleRunning(true); setTimeout(function () { load(true); }, 800); })
       .catch(function (e) { api.toast(e.message, true); });
   };
 

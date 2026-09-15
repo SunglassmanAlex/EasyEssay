@@ -462,11 +462,14 @@ def extract_pdf(path: str | Path, page_from: int | None = None,
                 continue
             kind, level = _classify(b["text"], b["size"], body, b["bold"],
                                     b["math_ratio"], pno, state)
+            n_missing = mathify.count_missing_glyphs(b["text"])
             paragraphs.append({
                 "id": f"p{idx:04d}", "page": pno, "page_end": pno,
                 "kind": kind, "level": level,
                 "text": b["text"], "math_ratio": round(b["math_ratio"], 3),
                 "bbox": [round(v, 1) for v in b["bbox"]],
+                # 这段里有几处"PDF 字体表坏了、认不出"的字形（渲染为 ⟦?⟧，等模型还原）
+                **({"glyph_issues": n_missing} if n_missing else {}),
             })
 
     paragraphs = _merge_cross_page(paragraphs)
@@ -484,6 +487,7 @@ def extract_pdf(path: str | Path, page_from: int | None = None,
     title = re.sub(r"\$[^$]*\$", "", title).strip() or Path(path).stem
 
     doc.close()
+    glyph_issues = sum(p.get("glyph_issues", 0) for p in paragraphs)
     return {
         "title": title,
         "paragraphs": paragraphs,
@@ -491,6 +495,9 @@ def extract_pdf(path: str | Path, page_from: int | None = None,
         "body_size": round(body, 2),
         "ocr_pages": ocr_pages,
         "pages_extracted": p_to - p_from + 1,
+        # 汇总"需要模型还原的字形数"，用于给用户提示与"只修这些段"的入口
+        "glyph_issues": glyph_issues,
+        "glyph_issue_ids": [p["id"] for p in paragraphs if p.get("glyph_issues")],
     }
 
 

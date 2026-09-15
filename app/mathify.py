@@ -63,6 +63,34 @@ MATH_RANGES = (
 # 正文里几乎不出现的"强数学"ASCII 字符：一旦出现即可确认这是公式
 STRONG_ASCII = set("=+")
 
+# 无法识别的字形占位符。
+#
+# 为什么需要它：PDF 只存字形码位，字体的 ToUnicode 表经常是坏的。实测某论文里
+# CMEX10（LaTeX 的大型括号/矩阵扩展字体）的字形被映射成控制字符 U+0010/U+0011
+# 和私有区码位 U+F8EE…，它们其实是**大括号的上/下半截、矩阵的方括号**。
+# 早期实现把这些字符"静默丢弃"——公式就少了括号，模型拿到残缺公式自然翻错。
+# 现在统一替换成显式占位符，把"这里缺了什么"明确交给下游（模型）去按上下文还原。
+MISSING_GLYPH = "⟦?⟧"
+
+
+def is_unrenderable(ch: str) -> bool:
+    """是否是"渲染不出来、也没有语义"的垃圾码位（控制字符 / 私有区 / 替换符）。"""
+    cp = ord(ch)
+    if ch in "\n\t\r":
+        return False
+    if cp == 0xFFFD:                      # 替换符
+        return True
+    if cp < 0x20 or 0x7F <= cp <= 0x9F:   # C0 / C1 控制字符
+        return True
+    if 0xE000 <= cp <= 0xF8FF:            # 私有区（各字体自定义，含义不明）
+        return True
+    return False
+
+
+def count_missing_glyphs(text: str) -> int:
+    """统计文本里未还原的字形占位符个数（用于向用户提示"这段有几处要修"）。"""
+    return text.count(MISSING_GLYPH)
+
 MATH_SPAN_RE = re.compile(r"\$\$(.+?)\$\$|\$(.+?)\$", re.S)
 
 
@@ -249,11 +277,10 @@ def char_to_latex(ch: str) -> str:
     if cmd is None:
         cmd = _ASCII_ESCAPE.get(ch)
     if cmd is None:
+        if is_unrenderable(ch):       # 控制字符 / 私有区：留占位符，绝不静默丢弃
+            return MISSING_GLYPH
         if ch.isascii():
             return ch
-        cp = ord(ch)
-        if 0xE000 <= cp <= 0xF8FF:   # 私有区：字体垃圾码位，直接丢弃
-            return ""
         if unicodedata.combining(ch):  # 组合用变音符：直接丢弃，避免输出乱码
             return ""
         try:
@@ -330,9 +357,16 @@ def text_to_latex(text: str) -> str:
 
 
 def plain_text_escape(text: str) -> str:
-    """非数学文本：转义会干扰 Markdown / MathJax 的字符。"""
+    """非数学文本：转义会干扰 Markdown / MathJax 的字符。
+
+    注意这里也处理不可渲染码位 —— 早期版本只处理了数学片段，正文里的
+    控制字符/私有区字符会原样漏进最终结果，表现就是"论文里出现乱码"。
+    """
     out = []
     for i, ch in enumerate(text):
+        if is_unrenderable(ch):
+            out.append(MISSING_GLYPH)
+            continue
         if ch == "\\":
             out.append("∕")
         elif ch in "*_`$":

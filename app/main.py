@@ -210,6 +210,13 @@ async def api_upload(file: UploadFile = File(...),
             patch = {"status": "extracted", "message": "", "title": title.strip() or data.get("title") or doc_title,
                      "page_count": data.get("page_count"), "ocr_pages": data.get("ocr_pages", []),
                      "body_size": data.get("body_size")}
+            # 有认不出的字形就明确告诉用户（它们被标为 ⟦?⟧，翻译时由模型按上下文还原）
+            n_glyph = int(data.get("glyph_issues") or 0)
+            if n_glyph:
+                patch["message"] = (
+                    f"解析完成：{len(data.get('paragraphs') or [])} 段，其中 {n_glyph} 处字形无法辨认"
+                    f"（已标为 ⟦?⟧，翻译时会按上下文还原）")
+                patch["glyph_issues"] = n_glyph
             store.update_meta(doc_id, patch)
         except Exception as e:  # noqa: BLE001
             store.update_meta(doc_id, {"status": "error", "error": str(e)[:500],
