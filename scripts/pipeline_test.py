@@ -101,6 +101,7 @@ def main() -> None:
     client = MockClient(settings)
     real_make = T.make_client
     T.make_client = lambda st: client
+    probe = None          # 第 13 节的探针文档，供 finally 清理
     try:
         # ------------------------------------------------------------ 1
         print("\n== 1. 逐段翻译 ==")
@@ -236,15 +237,6 @@ def main() -> None:
               all((tr_after[k].get("zh") or "") == zh_before[k] for k in zh_before))
         check("重启复跑不会重复重建（幂等）",
               T.restore_document(doc_id, settings).get("skipped") is True)
-    finally:
-        T.make_client = real_make
-        shutil.rmtree(tmp_dir, ignore_errors=True)
-        if not args.keep:
-            store.delete_doc(doc_id)
-            print(f"\n  已清理测试文档 {doc_id}")
-        else:
-            print(f"\n  保留测试文档 {doc_id}（data/docs/{doc_id}）")
-
         # ------------------------------------------------------------ 12
         print("\n== 12. 无法辨认字形（PDF 字体表坏了）的处理 ==")
         # 背景：CMEX10 等数学字体的字形常被映射成控制字符/私有区码位，
@@ -271,6 +263,47 @@ def main() -> None:
         check("抽取结果带字形问题字段",
               isinstance(doc.get("glyph_issues"), int) and "glyph_issue_ids" in doc,
               f"glyph_issues={doc.get('glyph_issues')}")
+
+        # ------------------------------------------------------------ 13
+        print("\n== 13. 模型「用 ? 顶替占位符」的发现与重试 ==")
+        # 实测模型会把 ⟦?⟧ 改写成 ⟨?⟩ —— 看起来像修好了，其实是在藏问题。
+        # mock 刻意模仿这个行为：第一次给 ?，收到加强指令后才真正还原。
+        probe = store.create_doc("占位符重试测试", PDF, "p.pdf")
+        pdata = extract_pdf(PDF, 1, 1)
+        pdata["paragraphs"][0]["text"] = "⟦?⟧Y $\\cdot \\cdot \\cdot$ ⟦?⟧Y"
+        pdata["paragraphs"][0]["kind"] = "equation"
+        pid0 = pdata["paragraphs"][0]["id"]
+        store.save_extracted(probe, pdata)
+        client.MOCK_BAD_REPAIR = False
+        T.translate_document(probe, settings, force=True)
+        rec = (store.load_translations(probe).get(pid0) or {})
+        blob = (rec.get("en") or "") + (rec.get("zh") or "")
+        check("第一次被 ? 顶替 → 自动重试并修好", "?" not in blob and "⟦?⟧" not in blob,
+              (rec.get("en") or "")[:80])
+        check("修好后不标记为待确认", rec.get("unrepaired") is not True)
+
+        client.MOCK_BAD_REPAIR = True
+        store.save_translations(probe, {})
+        T.translate_document(probe, settings, force=True)
+        rec2 = (store.load_translations(probe).get(pid0) or {})
+        check("确实修不好时如实标记 unrepaired", rec2.get("unrepaired") is True,
+              f"unrepaired={rec2.get('unrepaired')} en={(rec2.get('en') or '')[:40]!r}")
+        check("标记的段落仍保留模型输出（不丢译文）", bool(rec2.get("zh")))
+        client.MOCK_BAD_REPAIR = False
+    finally:
+        # 注意：清理必须放 finally，而**测试节必须留在 try 里** ——
+        # 第 12/13 节依赖 T.make_client 被替换成计数用 mock，一旦写到 finally
+        # 后面，桩已被 real_make 覆盖，mock 的行为（含 MOCK_BAD_REPAIR）全部失效。
+        T.make_client = real_make
+        shutil.rmtree(tmp_dir, ignore_errors=True)
+        for d in (probe, doc_id):
+            if not d:
+                continue
+            if d == doc_id and args.keep:
+                print(f"\n  保留测试文档 {doc_id}（data/docs/{doc_id}）")
+                continue
+            store.delete_doc(d)
+            print(f"\n  已清理测试文档 {d}")
 
     print(f"\n== 结果：{len(PASS)} 项通过，{len(FAIL)} 项失败 ==")
     if FAIL:

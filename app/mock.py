@@ -21,10 +21,17 @@ from typing import Any, Iterator
 from .deepseek import _extract_json  # 复用真实客户端的解析逻辑
 
 MOCK_TAG = "〔模拟译文〕"
+MISSING_GLYPH = "⟦?⟧"
 
 
 class MockClient:
-    """接口与 DeepSeekClient 完全一致，便于无缝替换。"""
+    """接口与 DeepSeekClient 完全一致，便于无缝替换。
+
+    除了翻译，它还刻意模仿两种**真实模型会犯的错**，好让测试覆盖到对应的处理分支：
+      * 收到含 `⟦?⟧`（无法辨认字形）的段落时，第一次会用 `⟨?⟩` 顶替 —— 这正是实测中
+        模型的行为；只有收到加强指令（STRICT_REPAIR_HINT）后才给出真正的还原。
+      * MOCK_BAD_REPAIR = True 时永远修不对，用于验证"确实修不好就如实标记"。
+    """
 
     def __init__(self, settings: dict | None = None):
         self.settings = settings or {}
@@ -32,6 +39,8 @@ class MockClient:
         self.base_url = "mock://local"
         # 用于触发"漏返段落 id"的分支，验证 translate 的补漏重试
         self.calls = 0
+        # True = 永远修不对（验证"修不好就如实标记"）；False = 收到严格指令后能修对
+        self.MOCK_BAD_REPAIR = False
 
     # ---------------------------------------------------------------- 翻译
     TASK_MARKERS = ("translate_each_paragraph", "restore_original")
@@ -88,6 +97,16 @@ class MockClient:
             if want_rebuilt:
                 # 与真实模型一致：每段都返回 en；无需改动的原样返回
                 rec["en"] = self._rebuild(text) or text
+            if MISSING_GLYPH in text:
+                strict = any("上一轮的问题" in (m.get("content") or "") for m in messages)
+                if self.MOCK_BAD_REPAIR or not strict:
+                    # 模仿真实模型的偷懒：把占位符换成 `?`
+                    fixed = text.replace(MISSING_GLYPH, r"\langle ? \rangle")
+                else:
+                    # 收到加强指令后给出真正的还原
+                    fixed = text.replace(MISSING_GLYPH, r"\left[\;\right]")
+                rec["en"] = fixed
+                rec["zh"] = MOCK_TAG + fixed      # 译文里同样不再出现占位符
             items.append(rec)
         return self._fence({"items": items})
 

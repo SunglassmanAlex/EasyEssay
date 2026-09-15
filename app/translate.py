@@ -12,7 +12,7 @@ import json
 import re
 from typing import Any, Callable, Iterator
 
-from . import store
+from . import mathify, store
 from .deepseek import DeepSeekClient, DeepSeekError, make_client
 
 OUTPUT_SPEC = r"""
@@ -29,6 +29,19 @@ OUTPUT_SPEC = r"""
   按上下文还原成最可能的 LaTeX，**绝不在 zh 里保留 `⟦?⟧`**；
 - 若该段是纯公式（$$...$$），en 与 zh 都原样返回该公式，不要添加解释；
 - terms 只列该段的关键术语（最多 4 个，en/zh 对应），没有则给空数组 []。"""
+
+# 模型把占位符改写成 `?` 时，用于第二次尝试的加强指令
+STRICT_REPAIR_HINT = r"""
+
+【重要·上一轮的问题】你把无法辨认的字形占位符 ⟦?⟧ 改写成了 `?`，这不行：
+`?` 不是公式的一部分，看起来像"修好了"其实是在藏问题。这次请务必：
+- 不要出现任何 `?`；
+- 结合上下文给出**最可能的字面推断**。按实测统计，⟦?⟧ 绝大多数是：
+  矩阵/向量的括号 `[ ]`、`( )`（例如竖排向量用 \left(\begin{matrix}…\end{matrix}\right)），
+  集合的花括号 `{ }`，范数 `\| \|`，内积/期望的 `\langle \rangle`，或分式横线。
+  同一行成对出现的两个 ⟦?⟧ 基本就是矩阵方括号；
+- 实在无法确定时，选择上下文里最常用的那一种即可，但**不要留 `?`、不要留 ⟦?⟧**。"""
+
 
 # 关闭「原文重建」时的输出协议（只翻译）
 OUTPUT_SPEC_NO_RESTORE = r"""
@@ -174,6 +187,31 @@ def _translate_batch(client: DeepSeekClient, batch: list[dict], settings: dict,
             rec["en"] = en
         out[pid] = rec
         new_terms.extend(terms)
+
+    # 校验：模型有没有用 `?` 顶替占位符、或干脆照抄占位符
+    #
+    # 注意 `_no_repair_retry`：重试时的子调用必须跳过这段校验，否则单段重试会
+    # 再次触发"校验→重试→校验"，模型永远修不好时就会无限递归（第一版就是这么挂的）。
+    if not settings.get("_no_repair_retry"):
+        bad = [pid for pid, rec in out.items()
+               if mathify.find_unrepaired((rec.get("en") or "") + (rec.get("zh") or ""))]
+        for pid in bad:
+            para = next((p for p in batch if p["id"] == pid), None)
+            if not para:
+                continue
+            try:
+                strict = dict(settings)
+                strict["_no_repair_retry"] = True
+                strict["system_prompt"] = (settings.get("system_prompt", "") or "") + STRICT_REPAIR_HINT
+                sub, _t = _translate_batch(client, [para], strict, glossary)
+                if sub and not mathify.find_unrepaired(
+                        (sub[pid].get("en") or "") + (sub[pid].get("zh") or "")):
+                    out[pid] = sub[pid]
+                    continue
+            except DeepSeekError:
+                pass
+            # 重试仍不行：如实标记"待人工确认"，不要让用户以为修好了
+            out[pid]["unrepaired"] = True
 
     missing = [p for p in batch if p["id"] not in out]
     if missing:

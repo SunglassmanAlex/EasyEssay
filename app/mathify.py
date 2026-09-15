@@ -91,7 +91,36 @@ def count_missing_glyphs(text: str) -> int:
     """统计文本里未还原的字形占位符个数（用于向用户提示"这段有几处要修"）。"""
     return text.count(MISSING_GLYPH)
 
+
 MATH_SPAN_RE = re.compile(r"\$\$(.+?)\$\$|\$(.+?)\$", re.S)
+# `?` 紧贴 LaTeX 命令的形态，例如 "\langle ? \rangle"、"\left[ ? \right]"
+_Q_NEAR_CMD_RE = re.compile(r"\\[A-Za-z]{2,}\s*\?|\?\s*\\[A-Za-z]{2,}")
+
+
+def find_unrepaired(text: str) -> list[str]:
+    r"""检查（模型输出的）文本里是否还有没修好的公式，返回原因列表。
+
+    两种情况都算没修好：
+    1. 占位符原样留着 —— 模型直接照抄了；
+    2. **用 `?` 顶替占位符** —— 实测模型会这么干（`⟦?⟧⟦?⟧` → `\langle ? \rangle`）。
+       这比留着占位符更糟：把问题伪装成"看起来像公式"的东西，而且我的检测器
+       再也找不到它。所以数学片段里出现 `?` 一律视为未修复。
+    """
+    reasons: list[str] = []
+    body = text or ""
+    if MISSING_GLYPH in body:
+        reasons.append("占位符残留")
+    # 情况 2a：`?` 落在 $...$ 数学片段里
+    for m in MATH_SPAN_RE.finditer(body):
+        if "?" in m.group(0):
+            reasons.append("用 ? 顶替了无法辨认的字形")
+            break
+    else:
+        # 情况 2b：`?` 紧挨着 LaTeX 命令（如 `\langle ? \rangle`）。
+        # 模型经常不写 $ 定界符，只按 2a 判断会漏掉这类"伪装成公式"的输出。
+        if _Q_NEAR_CMD_RE.search(body):
+            reasons.append("用 ? 顶替了无法辨认的字形")
+    return reasons
 
 
 def is_math_char(ch: str) -> bool:
