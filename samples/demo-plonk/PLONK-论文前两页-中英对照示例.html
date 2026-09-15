@@ -1,0 +1,1400 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>PLONK：基于拉格朗日基置换的通用非交互知识论证 — EasyEssay 中英对照</title>
+<style>
+/* ==========================================================================
+   EasyEssay · 论文对照阅读样式
+   目标：与「论文中英对照」成品同一套排版语言 ——
+   衬线正文、左侧页码栏、分页标记、公式框、真表格、术语高亮、深浅色切换。
+   同时保留应用内所需的工具条 / 问 AI 侧栏 / 目录等组件样式。
+   应用内阅读页与导出的离线 HTML 共用本文件。
+   ========================================================================== */
+
+:root {
+  /* —— 论文纸感配色（默认浅色） —— */
+  --bg: #f7f5f1;
+  --fg: #1f1f1f;
+  --en: #3a3a3a;
+  --zh: #141414;
+  --line: #d9d3c7;
+  --rowline: #e7e2d9;
+  --accent: #7a3b1e;
+  --muted: #8a837a;
+  --eqbg: #efece5;
+  --tblhead: #e3ddd2;
+  --tblalt: #f2efe9;
+  --box: #fbfaf7;
+  --boxbd: #cfc7b8;
+  --card: #ffffff;
+  --hover: #f0ece5;
+  --accent-soft: rgba(122, 59, 30, .07);
+  --accent-fg: #fffaf5;
+  --shadow: 0 1px 2px rgba(40, 32, 20, .06), 0 8px 24px rgba(40, 32, 20, .05);
+
+  /* 拉丁字符用 Times New Roman；CJK 回退到系统中文字体 */
+  --font-main: "Times New Roman", Times, "Nimbus Roman", "Liberation Serif",
+               "Microsoft YaHei", "PingFang SC", "Noto Sans CJK SC", serif;
+  --font-en: var(--font-main);
+  --font-zh: var(--font-main);
+  --font-mono: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
+
+  --fs-en: 15.5px;
+  --fs-zh: 15.5px;
+  --lh: 1.8;
+  --gap: 28px;
+  --gut: 92px;          /* 左侧页码栏宽度 */
+  --reader-max: 1380px;
+  --code-bg: var(--eqbg);
+}
+
+body.dark, body.ee-dark {
+  --bg: #1b1a18;
+  --fg: #e9e6e1;
+  --en: #c9c4bc;
+  --zh: #f4f1ec;
+  --line: #3b3733;
+  --rowline: #2b2926;
+  --accent: #e6a97c;
+  --muted: #9a938a;
+  --eqbg: #26241f;
+  --tblhead: #2c2a26;
+  --tblalt: #222120;
+  --box: #211f1d;
+  --boxbd: #413c36;
+  --card: #211f1d;
+  --hover: #262421;
+  --accent-soft: rgba(230, 169, 124, .12);
+  --accent-fg: #1b1a18;
+  --shadow: 0 1px 2px rgba(0, 0, 0, .4), 0 8px 24px rgba(0, 0, 0, .3);
+}
+
+* { box-sizing: border-box; }
+html, body { margin: 0; padding: 0; }
+
+body {
+  background: var(--bg);
+  color: var(--fg);
+  line-height: var(--lh);
+  font-size: var(--fs-zh);
+  font-family: var(--font-main);
+  -webkit-font-smoothing: antialiased;
+  transition: background .2s, color .2s;
+}
+
+body.ee-sans {
+  --font-main: -apple-system, "Segoe UI", "Microsoft YaHei", "PingFang SC",
+               "Noto Sans CJK SC", system-ui, sans-serif;
+}
+
+a { color: var(--accent); text-decoration: none; }
+a:hover { text-decoration: underline; }
+
+/* ---------------------------------------------------------------- 顶栏 */
+
+.ee-topbar {
+  position: sticky;
+  top: 0;
+  z-index: 30;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 18px;
+  background: color-mix(in srgb, var(--bg) 90%, transparent);
+  backdrop-filter: saturate(1.4) blur(10px);
+  border-bottom: 1px solid var(--line);
+  flex-wrap: wrap;
+}
+
+.ee-topbar-left { display: flex; align-items: center; gap: 10px; min-width: 0; flex: 1 1 auto; }
+
+.ee-logo {
+  font-weight: 700;
+  font-size: 17px;
+  letter-spacing: .3px;
+  color: var(--accent);
+  white-space: nowrap;
+}
+
+.ee-doc-title {
+  font-weight: 600;
+  font-size: 13.5px;
+  max-width: 42vw;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ee-note { font-size: 12.5px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+.ee-topbar-actions { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+
+.ee-btn {
+  font: inherit;
+  font-size: 13px;
+  padding: 5px 10px;
+  border-radius: 7px;
+  border: 1px solid var(--line);
+  background: var(--card);
+  color: var(--fg);
+  cursor: pointer;
+  transition: background .15s, border-color .15s, color .15s;
+  white-space: nowrap;
+}
+.ee-btn:hover { background: var(--eqbg); }
+.ee-btn.active, .ee-btn[aria-pressed="true"] {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--accent-fg);
+}
+.ee-btn.ghost { border-color: transparent; background: transparent; color: var(--muted); }
+.ee-btn.ghost:hover { background: var(--eqbg); color: var(--fg); }
+.ee-btn:disabled { opacity: .5; cursor: not-allowed; }
+.ee-btn.primary { background: var(--accent); border-color: var(--accent); color: var(--accent-fg); font-weight: 600; }
+
+/* ---------------------------------------------------------------- 进度条 */
+
+.ee-progress { position: sticky; top: 47px; z-index: 29; height: 3px; background: var(--line); overflow: hidden; }
+.ee-progress-bar { height: 100%; width: 0; background: var(--accent); transition: width .4s ease; }
+
+/* ---------------------------------------------------------------- 文章区 */
+
+.wrap {
+  max-width: var(--reader-max);
+  margin: 0 auto;
+  padding: 22px 26px 90px var(--gut);
+}
+
+/* 阅读容器本身不再加内边距，由内部 .wrap 承担（避免叠加） */
+.ee-reader { max-width: none; margin: 0; padding: 0; }
+
+/* 论文头部信息块 */
+.paper-head { border-bottom: 2px solid var(--line); padding-bottom: 14px; margin-bottom: 10px; }
+.paper-head h1 { font-size: 22px; margin: 0 0 4px; font-weight: 650; letter-spacing: .4px; line-height: 1.45; }
+.paper-head .sub { font-size: 15px; color: var(--muted); margin: 0 0 6px; }
+.paper-head .meta { font-size: 13.5px; color: var(--muted); margin: 0 0 8px; }
+.paper-head .hint { font-size: 13.2px; color: var(--muted); margin: 6px 0 0; line-height: 1.75; }
+
+.colhead {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: var(--gap);
+  font-size: 12.5px;
+  font-weight: 700;
+  letter-spacing: 1.4px;
+  text-transform: uppercase;
+  color: var(--muted);
+  padding: 8px 0 7px;
+  position: sticky;
+  top: 50px;
+  background: var(--bg);
+  z-index: 3;
+  border-bottom: 1px solid var(--line);
+}
+.colhead .r { padding-left: 18px; }
+
+.row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: var(--gap);
+  padding: 11px 0;
+  border-bottom: 1px solid var(--rowline);
+  align-items: start;
+  position: relative;
+  scroll-margin-top: 100px;
+}
+.row:last-child { border-bottom: none; }
+
+/* 左侧页码栏：内容取自 data-pg */
+.row::before {
+  content: attr(data-pg);
+  position: absolute;
+  left: calc(-1 * (var(--gut) - 20px));
+  top: 14px;
+  width: 60px;
+  text-align: right;
+  font-size: 11.5px;
+  font-weight: 700;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  font-family: var(--font-main);
+  user-select: none;
+}
+.row.head::before { top: 29px; }
+.row.tiny::before { top: 11px; }
+
+.en { color: var(--en); min-width: 0; overflow-wrap: break-word; font-size: var(--fs-en); }
+.zh {
+  color: var(--zh); border-left: 3px solid var(--line); padding-left: 15px;
+  min-width: 0; overflow-wrap: break-word; font-size: var(--fs-zh);
+}
+
+.row.head { border-bottom: 1px solid var(--line); padding-top: 26px; }
+.row.head .en, .row.head .zh {
+  font-weight: 700; font-size: 16.5px; color: var(--accent); border-left: none; padding-left: 0;
+}
+.row.sub .en, .row.sub .zh { font-weight: 650; font-size: 15px; color: var(--accent); }
+.row.tiny .en, .row.tiny .zh { font-size: 13.5px; color: var(--muted); line-height: 1.7; }
+.row.caption .en, .row.caption .zh { font-size: 13.5px; color: var(--muted); }
+.row.eq .en, .row.eq .zh { text-align: center; }
+
+.row.active { background: var(--accent-soft); }
+.row:hover .zh { border-left-color: var(--accent); }
+
+/* 兼容旧类名（brow/bcell） */
+.brow { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: var(--gap);
+        padding: 11px 0; border-bottom: 1px solid var(--rowline); position: relative; align-items: start; }
+.bcell { min-width: 0; overflow-wrap: break-word; }
+.bcell.en { color: var(--en); }
+.bcell.zh { color: var(--zh); border-left: 3px solid var(--line); padding-left: 15px; }
+
+/* 分页标记行 */
+.row.pbreak {
+  border-top: 1px dashed var(--line);
+  border-bottom: 1px dashed var(--line);
+  background: var(--eqbg);
+  margin: 9px 0;
+  padding: 5px 0;
+}
+.row.pbreak::before { color: var(--accent); font-size: 12px; }
+.row.pbreak .en, .row.pbreak .zh {
+  font-size: 12.5px; font-weight: 700; color: var(--accent); letter-spacing: .4px;
+  border-left: none; padding-left: 0; text-align: center;
+}
+
+/* 段内换页点 */
+.pgmark {
+  display: inline-block;
+  margin: 0 4px;
+  padding: 1px 9px;
+  background: var(--eqbg);
+  border-top: 1px dashed var(--line);
+  border-bottom: 1px dashed var(--line);
+  border-radius: 4px;
+  font-size: 11.5px;
+  font-weight: 700;
+  color: var(--accent);
+  letter-spacing: .4px;
+  white-space: nowrap;
+}
+
+/* 公式 */
+.eq {
+  margin: 10px 0;
+  padding: 9px 6px;
+  background: var(--eqbg);
+  border-radius: 6px;
+  overflow-x: auto;
+  text-align: center;
+}
+.eq-tag { text-align: center; font-size: 13px; color: var(--muted); }
+mjx-container { max-width: 100%; }
+mjx-container[display="true"] { margin: 0 !important; }
+.row.eq mjx-container[display="true"] { padding: 2px 0; }
+
+/* 术语 */
+.term { color: var(--accent); font-weight: 600; cursor: help; }
+.term-en { border-bottom: 1px dotted var(--line); cursor: help; }
+.term:hover, .term-en:hover { background: var(--accent-soft); }
+
+/* 正文内元素 */
+.en p, .zh p, .bcell p { margin: 0 0 .7em; }
+.en p:last-child, .zh p:last-child, .bcell p:last-child { margin-bottom: 0; }
+.en ol, .en ul, .zh ol, .zh ul { padding-left: 22px; margin: 6px 0; }
+.en li, .zh li { margin: 4px 0; }
+strong, b { font-weight: 700; }
+code { background: var(--code-bg); padding: 1px 4px; border-radius: 3px; font-size: .88em; font-family: var(--font-mono); }
+blockquote {
+  margin: 8px 0; padding: 2px 12px; border-left: 3px solid var(--line);
+  color: var(--muted); font-size: .95em;
+}
+.md-h { font-size: 15.5px; margin: .5em 0 .3em; }
+
+/* 表格：左右各完整一份，数值 / 行序 / 列义与原文一致 */
+.tblbox { overflow-x: auto; }
+table.t, .en table, .zh table, .bcell table {
+  border-collapse: collapse;
+  width: 100%;
+  font-size: 13.2px;
+  border-top: 1.6px solid var(--fg);
+  border-bottom: 1.6px solid var(--fg);
+}
+table.t th, .en table th, .zh table th {
+  background: var(--tblhead);
+  font-weight: 700;
+  text-align: center;
+  padding: 4px;
+  border-bottom: 1px solid var(--fg);
+}
+table.t td, .en table td, .zh table td {
+  padding: 3.5px 4px;
+  border-bottom: 1px solid var(--rowline);
+  text-align: center;
+}
+table.t td.l { text-align: left; }
+table.t tr:nth-child(even) td, .en table tr:nth-child(even) td { background: var(--tblalt); }
+.tcap { margin: 2px 0 6px; font-size: 13px; color: var(--muted); }
+
+/* 算法 / 协议框 */
+.proto {
+  border: 1px solid var(--boxbd);
+  background: var(--box);
+  border-radius: 6px;
+  padding: 10px 13px;
+  font-size: 14px;
+  line-height: 1.68;
+  margin: 6px 0;
+}
+.proto .pt { font-weight: 700; color: var(--accent); font-size: 14.5px; margin-bottom: 4px; }
+.proto .in { margin-bottom: 5px; color: var(--muted); font-size: 13.2px; }
+.proto .figcap { margin-top: 7px; font-size: 13px; color: var(--muted); border-top: 1px dashed var(--rowline); padding-top: 5px; }
+
+/* 视图模式 */
+.ee-reader.view-en .zh, .ee-reader.view-en .colhead .r { display: none; }
+.ee-reader.view-en .colhead, .ee-reader.view-en .row,
+.ee-reader.view-en .brow { grid-template-columns: minmax(0, 1fr); }
+.ee-reader.view-en .zh { border-left: none; padding-left: 0; }
+.ee-reader.view-zh .en, .ee-reader.view-zh .colhead .l { display: none; }
+.ee-reader.view-zh .colhead, .ee-reader.view-zh .row,
+.ee-reader.view-zh .brow { grid-template-columns: minmax(0, 1fr); }
+.ee-reader.hide-refs .row.tiny.ref, .ee-reader.hide-refs .row.ref { display: none; }
+.ee-reader.show-raw .en[data-rebuilt="1"]::before { content: "PDF 直抽原文"; color: var(--muted); }
+
+.en[data-rebuilt="1"]::before {
+  content: "公式已重建";
+  display: block;
+  font-size: 10.5px;
+  letter-spacing: .06em;
+  color: var(--accent);
+  opacity: .8;
+  margin-bottom: 4px;
+}
+
+.zh .empty { color: var(--muted); font-style: italic; font-size: .94em; }
+.zh.pending { background-image: linear-gradient(90deg, transparent 0, var(--accent-soft) 50%, transparent 100%); }
+
+/* ---------------------------------------------------------------- 选中工具条 */
+
+.ee-selbtn {
+  position: fixed; z-index: 60; display: flex; gap: 4px; padding: 4px;
+  background: var(--card); border: 1px solid var(--line); border-radius: 10px;
+  box-shadow: 0 6px 20px rgba(0, 0, 0, .18);
+}
+.ee-selbtn button {
+  font: inherit; font-size: 12.5px; border: none; background: transparent;
+  color: var(--fg); padding: 5px 9px; border-radius: 7px; cursor: pointer;
+}
+.ee-selbtn button:hover { background: var(--accent); color: var(--accent-fg); }
+
+/* ---------------------------------------------------------------- 问 AI 侧栏 */
+
+.ee-ask {
+  position: fixed; top: 0; right: 0; bottom: 0; width: min(460px, 92vw); z-index: 70;
+  display: flex; flex-direction: column; background: var(--card);
+  border-left: 1px solid var(--line); box-shadow: -12px 0 40px rgba(0, 0, 0, .14);
+  transition: transform .22s ease;
+}
+.ee-ask[hidden] { display: none; }
+.ee-ask-head { display: flex; align-items: center; gap: 8px; padding: 12px 14px; border-bottom: 1px solid var(--line); }
+.ee-ask-head .t { font-weight: 700; font-size: 14px; }
+.ee-ask-head .ctx { flex: 1 1 auto; font-size: 12px; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ee-ask-body { flex: 1 1 auto; overflow-y: auto; padding: 14px; display: flex; flex-direction: column; gap: 12px; }
+.ee-msg { font-size: 14px; line-height: 1.72; }
+.ee-msg .who { font-size: 11px; text-transform: uppercase; letter-spacing: .07em; color: var(--muted); margin-bottom: 4px; }
+.ee-msg.user .bubble {
+  background: var(--accent-soft); border: 1px solid var(--line);
+  border-radius: 10px; padding: 9px 11px; white-space: pre-wrap;
+}
+.ee-msg .bubble p { margin: 0 0 .6em; }
+.ee-msg .bubble p:last-child { margin-bottom: 0; }
+.ee-msg .bubble pre { background: var(--code-bg); padding: 10px; border-radius: 8px; overflow-x: auto; font-size: 12.5px; }
+.ee-msg .bubble ul, .ee-msg .bubble ol { padding-left: 1.25em; margin: .4em 0; }
+.ee-msg .bubble h1, .ee-msg .bubble h2, .ee-msg .bubble h3 { font-size: 15px; margin: .7em 0 .4em; }
+.ee-msg .bubble table { border-collapse: collapse; font-size: 13px; }
+.ee-msg .bubble th, .ee-msg .bubble td { border: 1px solid var(--line); padding: 4px 8px; }
+.ee-msg.err .bubble { color: #b91c1c; font-size: 13px; }
+body.dark .ee-msg.err .bubble { color: #fca5a5; }
+.ee-cursor::after { content: "▍"; animation: ee-blink 1s steps(2, start) infinite; color: var(--accent); }
+@keyframes ee-blink { to { visibility: hidden; } }
+.ee-ask-chips { display: flex; gap: 6px; padding: 0 14px 8px; flex-wrap: wrap; }
+.ee-chip {
+  font: inherit; font-size: 12.5px; padding: 5px 10px; border-radius: 999px;
+  border: 1px solid var(--line); background: transparent; color: var(--muted); cursor: pointer;
+}
+.ee-chip:hover { border-color: var(--accent); color: var(--accent); }
+.ee-ask-input { border-top: 1px solid var(--line); padding: 10px 12px 12px; display: flex; flex-direction: column; gap: 8px; }
+.ee-ask-input textarea {
+  width: 100%; min-height: 62px; resize: vertical; font: inherit; font-size: 14px; line-height: 1.6;
+  padding: 9px 11px; border-radius: 10px; border: 1px solid var(--line); background: var(--bg); color: var(--fg);
+}
+.ee-ask-input .row { display: flex; align-items: center; gap: 10px; border: none; padding: 0; }
+.ee-ask-input label { font-size: 12.5px; color: var(--muted); display: flex; align-items: center; gap: 5px; cursor: pointer; }
+.ee-ask-input .spacer { flex: 1 1 auto; }
+.ee-ask-hint { font-size: 12px; color: var(--muted); line-height: 1.5; }
+
+/* ---------------------------------------------------------------- 目录 */
+
+.ee-toc {
+  position: fixed; top: 0; left: 0; bottom: 0; width: 320px; z-index: 68;
+  background: var(--card); border-right: 1px solid var(--line);
+  box-shadow: 12px 0 40px rgba(0, 0, 0, .12); overflow-y: auto; padding: 14px;
+}
+.ee-toc[hidden] { display: none; }
+.ee-toc h4 { margin: 4px 0 10px; font-size: 12px; letter-spacing: .08em; text-transform: uppercase; color: var(--muted); }
+.ee-toc a { display: block; padding: 6px 8px; border-radius: 8px; font-size: 13.5px; color: var(--fg); line-height: 1.45; }
+.ee-toc a:hover { background: var(--eqbg); text-decoration: none; }
+.ee-toc a.lv1 { font-weight: 600; }
+.ee-toc a.lv2 { padding-left: 20px; color: var(--muted); }
+
+/* ---------------------------------------------------------------- 浮动主题按钮（成品同款） */
+
+.tgl {
+  position: fixed; right: 18px; bottom: 18px; z-index: 50;
+  border: 1px solid var(--line); background: var(--eqbg); color: var(--fg);
+  border-radius: 20px; padding: 7px 14px; font-size: 13px; cursor: pointer; font-family: inherit;
+}
+
+/* ---------------------------------------------------------------- 窄屏 */
+
+@media (max-width: 900px) {
+  :root { --gap: 6px; --gut: 22px; }
+  .row, .brow, .colhead { grid-template-columns: 1fr; }
+  .zh { border-left: none; border-top: 1px dashed var(--line); padding-left: 0; padding-top: 8px; }
+  .colhead { display: none; }
+  .wrap { padding: 16px 16px 80px 16px; }
+  .row::before { position: static; display: block; width: auto; text-align: left; margin: 0 0 3px; color: var(--accent); font-size: 12px; }
+  .row.head::before, .row.tiny::before { top: auto; }
+}
+
+/* ---------------------------------------------------------------- 状态 */
+
+.ee-loading { display: flex; align-items: center; justify-content: center; gap: 10px; padding: 80px 0; color: var(--muted); font-size: 14px; }
+.ee-spinner { width: 16px; height: 16px; border: 2px solid var(--line); border-top-color: var(--accent); border-radius: 50%; animation: ee-spin .8s linear infinite; }
+@keyframes ee-spin { to { transform: rotate(360deg); } }
+.ee-empty-state {
+  max-width: 620px; margin: 60px auto; padding: 26px; background: var(--card);
+  border: 1px solid var(--line); border-radius: 14px; font-size: 14px; line-height: 1.7; color: var(--muted);
+}
+
+/* ---------------------------------------------------------------- 打印 */
+
+@media print {
+  :root { --bg: #fff; --card: #fff; --eqbg: #f6f4ef; --lh: 1.55; --fs-en: 10.5pt; --fs-zh: 10.5pt; --gut: 46px; }
+  body { background: #fff; }
+  .ee-topbar, .ee-ask, .ee-toc, .ee-selbtn, .ee-progress, .tgl { display: none !important; }
+  .wrap, .ee-reader { max-width: none; }
+  .row { break-inside: avoid; page-break-inside: avoid; }
+}
+
+</style>
+</head>
+<body class="ee-standalone" data-api-base="http://127.0.0.1:8765">
+<header class="ee-topbar">
+  <div class="ee-topbar-left">
+    <span class="ee-logo">EasyEssay</span>
+    <span class="ee-doc-title" title="PLONK：基于拉格朗日基置换的通用非交互知识论证">PLONK：基于拉格朗日基置换的通用非交互知识论证</span>
+    <span class="ee-note">共 24 段，已译 24 段</span>
+  </div>
+  <div class="ee-topbar-actions">
+    <button class="ee-btn" data-act="view-all" title="显示原文+译文">对照</button>
+    <button class="ee-btn" data-act="view-en" title="只显示英文原文">仅原文</button>
+    <button class="ee-btn" data-act="view-zh" title="只显示中文译文">仅译文</button>
+    <button class="ee-btn" data-act="toggle-raw" title="在「重建原文」与「PDF 直抽原文」之间切换">原始抽取</button>
+    <button class="ee-btn" data-act="toggle-ref" title="显示/隐藏参考文献">参考文献</button>
+    <button class="ee-btn" data-act="font-minus">A-</button>
+    <button class="ee-btn" data-act="font-plus">A+</button>
+    <button class="ee-btn" data-act="toggle-font" title="在衬线（Times）与无衬线字体之间切换">字体</button>
+    <button class="ee-btn" data-act="toggle-theme">明/暗</button>
+    <button class="ee-btn" data-act="toggle-ask">问 AI</button>
+  </div>
+</header>
+<div class="ee-progress"><div class="ee-progress-bar" style="width:100%"></div></div>
+<main class="ee-reader" id="ee-reader"></main>
+<div class="ee-ask" id="ee-ask" hidden></div>
+<script>
+window.MathJax = {
+  tex: {
+    inlineMath: [['$', '$'], ['\\(', '\\)']],
+    displayMath: [['$$', '$$'], ['\\[', '\\]']],
+    processEscapes: true,
+    tags: 'none'
+  },
+  svg: { fontCache: 'global' },
+  options: { skipHtmlTags: ['script', 'noscript', 'style', 'textarea', 'pre', 'code'] }
+};
+window.EASYESSay_API = "http://127.0.0.1:8765";
+window.EASYESSay_STANDALONE = true;
+</script>
+<script src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-svg.js" onerror="(function(){var s=document.createElement('script');s.src='./vendor/mathjax/tex-svg.js';document.head.appendChild(s);})()"></script>
+<script>
+/* EasyEssay · 轻量 Markdown + LaTeX 渲染
+   要点：数学片段先切分再转义，保证 $...$ 内容原样交给 MathJax。 */
+(function (global) {
+  'use strict';
+
+  var ESC = { '&': '&amp;', '<': '&lt;', '>': '&gt;' };
+  function esc(s) { return String(s == null ? '' : s).replace(/[&<>]/g, function (c) { return ESC[c]; }); }
+
+  // 行内/独立公式（含 \( \) \[ \] 形式）；\$ 转义不参与匹配
+  var MATH_RE = /(\$\$[\s\S]+?\$\$|\\\[[\s\S]+?\\\]|\\\([\s\S]+?\\\)|(?<!\\)\$(?!\s)(?:\\\$|[^$\n])*?(?<!\\)\$)/g;
+
+  function splitMath(text) {
+    var parts = [], last = 0, m;
+    MATH_RE.lastIndex = 0;
+    text = String(text || '');
+    while ((m = MATH_RE.exec(text)) !== null) {
+      if (m.index > last) parts.push({ math: false, s: text.slice(last, m.index) });
+      parts.push({ math: true, s: m[0] });
+      last = m.index + m[0].length;
+    }
+    if (last < text.length) parts.push({ math: false, s: text.slice(last) });
+    return parts;
+  }
+
+  function plain(s) {
+    var out = esc(s);
+    out = out.replace(/`([^`]+)`/g, '<code>$1</code>');
+    out = out.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>');
+    out = out.replace(/(^|[^*\w])\*([^*\n]+)\*/g, '$1<em>$2</em>');
+    out = out.replace(/\[([^\]]+)\]\((https?:[^)\s]+)\)/g,
+      '<a href="$2" target="_blank" rel="noopener">$1</a>');
+    out = out.replace(/\\([*_`$#>\-\[\]])/g, '$1');   // 反转义
+    return out;
+  }
+
+  function inlineMd(text) {
+    return splitMath(text).map(function (p) {
+      return p.math ? esc(p.s) : plain(p.s);
+    }).join('');
+  }
+
+  function node(tag, cls, html) {
+    var el = document.createElement(tag);
+    if (cls) el.className = cls;
+    if (html != null) el.innerHTML = html;
+    return el;
+  }
+
+  var BLOCK_MATH_RE = /^\$\$[\s\S]*\$\$$|^\\\[[\s\S]*\\\]$/;
+
+  /** 把一段富文本渲染进容器：支持标题、列表、引用、表格、代码块、独立公式。 */
+  function richInto(el, text, opts) {
+    opts = opts || {};
+    el.innerHTML = '';
+    text = String(text == null ? '' : text).replace(/\r/g, '');
+    var blocks = text.split(/\n{2,}/);
+
+    blocks.forEach(function (block) {
+      var t = block.trim();
+      if (!t) return;
+
+      // 代码块
+      var fence = t.match(/^```([\w+-]*)\n?([\s\S]*?)```$/);
+      if (fence) {
+        el.appendChild(node('pre', null, esc(fence[2])));
+        return;
+      }
+      // 独立公式
+      if (BLOCK_MATH_RE.test(t)) {
+        el.appendChild(node('div', 'md-display', esc(t)));
+        return;
+      }
+      // 标题
+      var h = t.match(/^(#{1,6})\s+(.*)$/);
+      if (h && !t.includes('\n')) {
+        var lv = Math.min(6, h[1].length);
+        el.appendChild(node(lv <= 3 ? 'h' + lv : 'h4', 'md-h', inlineMd(h[2])));
+        return;
+      }
+
+      var lines = block.split('\n');
+      var allBullet = lines.every(function (l) { return /^\s*[-*•]\s+/.test(l); });
+      var allNum = lines.every(function (l) { return /^\s*\d+[.)]\s+/.test(l); });
+      var allQuote = lines.every(function (l) { return /^\s*>\s?/.test(l); });
+
+      if (allBullet || allNum) {
+        var list = node(allBullet ? 'ul' : 'ol');
+        lines.forEach(function (l) {
+          var item = l.replace(/^\s*(?:[-*•]|\d+[.)])\s+/, '');
+          list.appendChild(node('li', null, inlineMd(item)));
+        });
+        el.appendChild(list);
+        return;
+      }
+      if (allQuote) {
+        el.appendChild(node('blockquote', null,
+          lines.map(function (l) { return inlineMd(l.replace(/^\s*>\s?/, '')); }).join('<br>')));
+        return;
+      }
+      // 表格
+      if (lines.length >= 2 && /\|/.test(lines[0]) && /^\s*\|?[\s:|-]+\|[\s:|-]*$/.test(lines[1])) {
+        var tbl = node('table', 't');
+        var head = node('thead');
+        var hr = node('tr');
+        lines[0].split('|').filter(function (c, i, arr) { return !(i === 0 && !c.trim()) && !(i === arr.length - 1 && !c.trim()); })
+          .forEach(function (c) { hr.appendChild(node('th', null, inlineMd(c.trim()))); });
+        head.appendChild(hr); tbl.appendChild(head);
+        var tb = node('tbody');
+        lines.slice(2).forEach(function (l) {
+          if (!l.trim()) return;
+          var tr = node('tr');
+          var cells = l.split('|').filter(function (c, i, arr) { return !(i === 0 && !c.trim()) && !(i === arr.length - 1 && !c.trim()); });
+          cells.forEach(function (c, ci) {
+            tr.appendChild(node('td', ci === 0 ? 'l' : null, inlineMd(c.trim())));
+          });
+          tb.appendChild(tr);
+        });
+        tbl.appendChild(tb);
+        el.appendChild(node('div', 'tblbox')).appendChild(tbl);
+        return;
+      }
+
+      var p = node('p');
+      p.innerHTML = lines.map(inlineMd).join('<br>');
+      el.appendChild(p);
+    });
+    return el;
+  }
+
+  /** 把纯文本按空行切成段落数组（用于 OCR 结果等） */
+  function toParagraphs(text) {
+    return String(text || '').split(/\n\s*\n/).map(function (s) { return s.trim(); }).filter(Boolean);
+  }
+
+  global.EasyEssay = global.EasyEssay || {};
+  global.EasyEssay.md = { esc: esc, splitMath: splitMath, inlineMd: inlineMd, richInto: richInto, toParagraphs: toParagraphs };
+})(window);
+
+</script>
+<script>
+/* EasyEssay · 双栏对照渲染核心
+   左栏英文原文 / 右栏中文译文，逐段严格对齐。排版对齐「论文中英对照」成品的做法：
+   - 衬线正文 + 左侧页码栏（p.5 / p.1–2）
+   - 页与页之间插入分页标记行；被页边界切断的段落在原位插入换页点
+   - 独立公式放进公式框；表格左右各完整一份（数值 / 行序 / 列义一致）
+   - 章节标题 / 图表题注 / 参考文献分级；页尾「全文完」
+   - 术语高亮、选中片段浮出「问 AI」、右下角深浅色切换
+   应用内阅读页与导出的离线 HTML 共用这份代码。 */
+(function (global) {
+  'use strict';
+
+  var EE = global.EasyEssay = global.EasyEssay || {};
+  var md = EE.md;
+
+  function el(tag, cls, html) {
+    var n = document.createElement(tag);
+    if (cls) n.className = cls;
+    if (html != null) n.innerHTML = html;
+    return n;
+  }
+
+  // localStorage 在 file:// 等 opaque origin 下访问会直接抛 SecurityError，
+  // 导出的离线 HTML 正是这种场景，必须包起来。
+  var store = {
+    get: function (k) {
+      try { return global.localStorage ? global.localStorage.getItem(k) : null; } catch (e) { return null; }
+    },
+    set: function (k, v) {
+      try { if (global.localStorage) global.localStorage.setItem(k, v); } catch (e) { }
+    }
+  };
+
+  function typeset(root) {
+    function attempt() {
+      var MJ = global.MathJax;
+      if (!MJ) return false;
+      if (MJ.startup && MJ.startup.promise) {
+        MJ.startup.promise.then(function () {
+          try { MJ.typesetPromise([root]).catch(function () { }); } catch (e) { }
+        }).catch(function () { });
+        return true;
+      }
+      if (typeof MJ.typesetPromise === 'function') {
+        try { MJ.typesetPromise([root]).catch(function () { }); return true; } catch (e) { return false; }
+      }
+      return false;
+    }
+    if (attempt()) return;
+    var tries = 0;
+    var timer = setInterval(function () {
+      tries += 1;
+      if (attempt() || tries > 66) clearInterval(timer);
+    }, 150);
+  }
+
+  // ------------------------------------------------------------ 术语高亮
+
+  function highlightTerms(root, terms, lang) {
+    if (!terms || !terms.length) return;
+    var pairs = [];
+    terms.forEach(function (t) {
+      var needle = lang === 'zh' ? t.zh : t.en;
+      if (!needle || needle.length < 2) return;
+      pairs.push({ needle: needle, tip: [t.en, t.zh].filter(Boolean).join(' · ') });
+    });
+    if (!pairs.length) return;
+    pairs.sort(function (a, b) { return b.needle.length - a.needle.length; });
+
+    var walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, {
+      acceptNode: function (node) {
+        if (!node.nodeValue || !node.nodeValue.trim()) return NodeFilter.FILTER_REJECT;
+        var p = node.parentElement;
+        while (p && p !== root) {
+          var tag = p.tagName || '';
+          if (p.classList && (p.classList.contains('math') || p.classList.contains('term')
+            || p.classList.contains('term-en'))) return NodeFilter.FILTER_REJECT;
+          if (tag === 'CODE' || tag === 'PRE' || tag.indexOf('MJX') === 0) return NodeFilter.FILTER_REJECT;
+          p = p.parentElement;
+        }
+        return NodeFilter.FILTER_ACCEPT;
+      }
+    });
+    var nodes = [];
+    while (walker.nextNode()) nodes.push(walker.currentNode);
+
+    nodes.forEach(function (node) {
+      var text = node.nodeValue;
+      var hit = null, at = -1;
+      for (var i = 0; i < pairs.length; i++) {
+        var idx = text.indexOf(pairs[i].needle);
+        if (idx >= 0 && (at < 0 || idx < at)) { at = idx; hit = pairs[i]; }
+      }
+      if (!hit) return;
+      var frag = document.createDocumentFragment();
+      var rest = text;
+      while (at >= 0) {
+        if (at > 0) frag.appendChild(document.createTextNode(rest.slice(0, at)));
+        var span = el('span', lang === 'zh' ? 'term' : 'term-en', md.esc(hit.needle));
+        span.title = hit.tip;
+        frag.appendChild(span);
+        rest = rest.slice(at + hit.needle.length);
+        at = -1; hit = null;
+        for (var j = 0; j < pairs.length; j++) {
+          var k = rest.indexOf(pairs[j].needle);
+          if (k >= 0 && (at < 0 || k < at)) { at = k; hit = pairs[j]; }
+        }
+      }
+      if (rest) frag.appendChild(document.createTextNode(rest));
+      if (node.parentNode) node.parentNode.replaceChild(frag, node);
+    });
+  }
+
+  // ------------------------------------------------------------ 单元格
+
+  /** 独立公式：把 $$...$$ 提出来放进公式框；残留文字（公式编号等）另起一行 */
+  function fillEquationCell(cell, text) {
+    var m = String(text || '').match(/\$\$[\s\S]+?\$\$|\$[^$\n]+?\$/);
+    if (m && m[0].length >= text.replace(/\s/g, '').length * 0.55) {
+      var rest = (text.slice(0, m.index) + ' ' + text.slice(m.index + m[0].length)).trim();
+      var box = el('div', 'eq');
+      box.innerHTML = md.esc(m[0].indexOf('$$') === 0 ? m[0] : '$' + m[0] + '$');
+      cell.appendChild(box);
+      if (rest) cell.appendChild(el('div', 'eq-tag', md.inlineMd(rest)));
+      return;
+    }
+    md.richInto(cell, text);
+  }
+
+  function fillCell(cell, para, kind, pageBreak) {
+    var text = para.text || '';
+    if (kind === 'equation') { fillEquationCell(cell, text); return; }
+    if (pageBreak && typeof pageBreak.at === 'number' && pageBreak.at > 0) {
+      // 段落被页边界切断：在英文栏原位插入换页点
+      var before = text.slice(0, pageBreak.at);
+      var after = text.slice(pageBreak.at);
+      md.richInto(cell, before);
+      cell.appendChild(el('span', 'pgmark',
+        '— 换页 · 原文第 ' + pageBreak.from + ' 页 → 第 ' + pageBreak.to + ' 页 —'));
+      var cont = el('span');
+      md.richInto(cont, after);
+      while (cont.firstChild) cell.appendChild(cont.firstChild);
+      return;
+    }
+    md.richInto(cell, text);
+  }
+
+  // ------------------------------------------------------------ 论文头部
+
+  function buildPaperHead(doc, stats, opts) {
+    var head = el('header', 'paper-head');
+    var title = doc.title || (doc.meta || {}).title || 'EasyEssay';
+    head.appendChild(el('h1', null, md.esc(title) + ' · 全文中英对照'));
+
+    var zhTitle = (doc.translations || {})[opts.titleParaId || 'p0001'];
+    var sub = zhTitle && zhTitle.zh ? zhTitle.zh : (opts.subtitle || '');
+    if (sub) head.appendChild(el('p', 'sub', md.inlineMd(sub.split('\n')[0])));
+
+    var authors = '';
+    var raw = (doc.paragraphs || [])[opts.authorParaIndex == null ? 1 : opts.authorParaIndex];
+    if (raw && raw.text && raw.text.length < 400) {
+      authors = raw.text.replace(/\$[^$]*\$/g, '').replace(/\s+/g, ' ').trim();
+    }
+    var metaBits = [];
+    if (authors) metaBits.push(md.esc(authors));
+    if ((doc.meta || {}).page_count) metaBits.push('全文 ' + (doc.meta || {}).page_count + ' 页');
+    if (stats.paragraphs) metaBits.push('共 ' + stats.paragraphs + ' 段');
+    if (stats.translated) metaBits.push('已译 ' + stats.translated + ' 段');
+    if ((doc.meta || {}).settings && (doc.meta || {}).settings.model) {
+      metaBits.push('模型 ' + md.esc((doc.meta || {}).settings.model));
+    }
+    if (metaBits.length) head.appendChild(el('p', 'meta', metaBits.join(' · ')));
+
+    head.appendChild(el('p', 'hint',
+      '左 = 英文原文 · 右 = 中文译文，段落逐一对齐，两栏分界线自首页至参考文献保持同一条。'
+      + '最左侧页栏标出每段在 PDF 中的<b>起始页</b>；每两页之间有一条虚线<b>分页标记行</b>。'
+      + '若某段原文被页边界切断，则标为区间 <code>p.1–2</code>，并在<b>英文栏的原位</b>插入换页点。'
+      + '表格在左右两栏各完整复现一份（左英文表头 / 右中文表头），<b>数值、行序、列义与原文一致</b>。'
+      + '公式由 MathJax 渲染；若显示为 <code>$…$</code> 源码，联网后刷新即可。'));
+    return head;
+  }
+
+  // ------------------------------------------------------------ 主渲染
+
+  function renderBilingual(container, doc, opts) {
+    opts = opts || {};
+    var translations = doc.translations || {};
+    var paragraphs = doc.paragraphs || [];
+    var state = {
+      viewMode: opts.viewMode || 'all',
+      hideRefs: !!opts.hideRefs,
+      showRaw: false,
+      scale: parseFloat(store.get('ee-scale') || '1') || 1
+    };
+
+    var wrapMeta = (doc.meta || {}).stats || {};
+    var stats = {
+      paragraphs: wrapMeta.paragraphs || paragraphs.length,
+      translated: wrapMeta.translated || Object.keys(translations).length
+    };
+
+    container.innerHTML = '';
+    container.classList.add('ee-reader');
+    container.classList.remove('view-en', 'view-zh', 'hide-refs', 'show-raw');
+
+    var wrap = el('div', 'wrap');
+    container.appendChild(wrap);
+
+    if (opts.header !== false) wrap.appendChild(buildPaperHead(doc, stats, opts));
+
+    var colhead = el('div', 'colhead');
+    colhead.appendChild(el('div', 'l', 'English（原文）'));
+    colhead.appendChild(el('div', 'r', '中文译文'));
+    wrap.appendChild(colhead);
+
+    var rowMap = {};
+    var switches = [];
+    var toc = [];
+    var prevPageEnd = null;
+
+    paragraphs.forEach(function (p) {
+      var from = p.page || 1;
+      var to = p.page_end || from;
+
+      // 页与页之间插入分页标记行
+      if (prevPageEnd != null && from !== prevPageEnd) {
+        var br = el('div', 'row pbreak');
+        br.dataset.pg = 'p.' + prevPageEnd + '→' + from;
+        var txt = '— 换页 · 原文第 ' + prevPageEnd + ' 页 → 第 ' + from + ' 页 —';
+        br.appendChild(el('div', 'en', txt));
+        br.appendChild(el('div', 'zh', txt));
+        wrap.appendChild(br);
+      }
+
+      var tr = translations[p.id] || {};
+      var kind = p.kind || 'text';
+      var cls = 'row brow';
+      if (kind === 'title') cls += ' head';
+      else if (kind === 'heading') cls += (p.level && p.level >= 2) ? ' sub' : ' head';
+      else if (kind === 'caption') cls += ' caption';
+      else if (kind === 'equation') cls += ' eq';
+      else if (kind === 'reference') cls += ' tiny ref';
+      var row = el('section', cls);
+      row.id = 'para-' + p.id;
+      row.dataset.id = p.id;
+      row.dataset.pg = (to !== from) ? ('p.' + from + '–' + to) : ('p.' + from);
+      if (kind === 'heading' || kind === 'title') {
+        row.dataset.heading = p.level || 1;
+        toc.push({ id: p.id, label: (p.text || '').slice(0, 90),
+                   level: kind === 'title' ? 1 : (p.level || 1) });
+      }
+
+      var en = el('div', 'en bcell');
+      var zh = el('div', 'zh bcell');
+
+      // 左栏优先用「重建原文」；可一键切回 PDF 直抽
+      var rebuilt = typeof tr.en === 'string' && tr.en.trim() && tr.en !== p.text;
+      var pageBreak = (to !== from && typeof p.page_break_at === 'number')
+        ? { at: p.page_break_at, from: from, to: to } : null;
+      if (rebuilt) {
+        fillCell(en, { kind: kind, text: state.showRaw ? p.text : tr.en }, kind,
+                 state.showRaw ? pageBreak : null);
+        en.dataset.rebuilt = '1';
+        en.title = '左栏为「重建原文」（公式已还原为标准 LaTeX）。点顶栏「原始抽取」可切回 PDF 直抽的原始文本。';
+        switches.push({ cell: en, para: p, fixed: tr.en, pageBreak: pageBreak });
+      } else {
+        fillCell(en, p, kind, pageBreak);
+      }
+
+      if (tr.zh) {
+        fillCell(zh, { kind: kind, text: tr.zh }, kind);
+        if (tr.terms && tr.terms.length) {
+          highlightTerms(en, tr.terms, 'en');
+          highlightTerms(zh, tr.terms, 'zh');
+        }
+      } else {
+        zh.classList.add('pending');
+        zh.appendChild(el('div', 'empty',
+          kind === 'equation' ? '（公式无需翻译）' : '待翻译…'));
+      }
+
+      row.appendChild(en);
+      row.appendChild(zh);
+      wrap.appendChild(row);
+      rowMap[p.id] = row;
+      prevPageEnd = to;
+    });
+
+    // 页尾
+    var end = el('div', 'row tiny');
+    end.dataset.pg = '';
+    end.appendChild(el('div', 'en', '— End of paper —'));
+    end.appendChild(el('div', 'zh', '— 全文完 —'));
+    wrap.appendChild(end);
+
+    var api = {
+      state: state,
+      toc: toc,
+      typeset: function () { typeset(wrap); },
+      setViewMode: function (mode) {
+        state.viewMode = mode;
+        container.classList.toggle('view-en', mode === 'en');
+        container.classList.toggle('view-zh', mode === 'zh');
+        return mode;
+      },
+      toggleRefs: function (force) {
+        state.hideRefs = force == null ? !state.hideRefs : !!force;
+        container.classList.toggle('hide-refs', state.hideRefs);
+        return state.hideRefs;
+      },
+      toggleRaw: function (force) {
+        state.showRaw = force == null ? !state.showRaw : !!force;
+        container.classList.toggle('show-raw', state.showRaw);
+        switches.forEach(function (s) {
+          s.cell.innerHTML = '';
+          if (state.showRaw) {
+            fillCell(s.cell, s.para, s.para.kind || 'text', s.pageBreak);
+          } else {
+            fillCell(s.cell, { kind: s.para.kind, text: s.fixed }, s.para.kind || 'text', null);
+          }
+        });
+        if (switches.length) typeset(wrap);
+        return state.showRaw;
+      },
+      setScale: function (scale) {
+        state.scale = Math.min(1.8, Math.max(0.75, scale));
+        var r = document.documentElement.style;
+        r.setProperty('--fs-en', (15.5 * state.scale).toFixed(2) + 'px');
+        r.setProperty('--fs-zh', (15.5 * state.scale).toFixed(2) + 'px');
+        store.set('ee-scale', String(state.scale));
+        return state.scale;
+      },
+      toggleSerif: function (force) {
+        var sans = force == null ? !document.body.classList.contains('ee-sans') : !!force;
+        document.body.classList.toggle('ee-sans', sans);
+        store.set('ee-font', sans ? 'sans' : 'serif');
+        return sans;
+      },
+      scrollTo: function (paraId) {
+        var row = rowMap[paraId];
+        if (row) row.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      },
+      markActive: function (paraId) {
+        Object.keys(rowMap).forEach(function (k) { rowMap[k].classList.remove('active'); });
+        if (rowMap[paraId]) rowMap[paraId].classList.add('active');
+      },
+      rows: rowMap
+    };
+
+    api.setViewMode(state.viewMode);
+    if (state.hideRefs) container.classList.add('hide-refs');
+    api.setScale(state.scale);
+    if (store.get('ee-font') === 'sans') document.body.classList.add('ee-sans');
+    typeset(wrap);
+    if (opts.onAsk) attachSelection(container, opts.onAsk);
+    if (opts.themeToggle !== false) {
+      var tgl = el('button', 'tgl', '切换深/浅色');
+      tgl.onclick = function () { document.body.classList.toggle('dark'); };
+      container.appendChild(tgl);
+    }
+    EE.__api = api;
+    EE.__wrap = wrap;
+    return api;
+  }
+
+  // ------------------------------------------------------------ 选中即问
+
+  function attachSelection(root, onAsk) {
+    var pill = null;
+    function hide() { if (pill) { pill.remove(); pill = null; } }
+
+    function show(rect, payload) {
+      hide();
+      pill = el('div', 'ee-selbtn');
+      var b1 = el('button', null, '问 AI');
+      b1.onclick = function () { hide(); onAsk(payload); };
+      pill.appendChild(b1);
+      var b2 = el('button', null, '解释公式');
+      b2.onclick = function () {
+        hide();
+        onAsk(Object.assign({}, payload, { question: '请逐步解释这段内容里的公式：每个符号的含义、取值范围，以及整体在证明中的作用。' }));
+      };
+      pill.appendChild(b2);
+      var b3 = el('button', null, '译得更准');
+      b3.onclick = function () {
+        hide();
+        onAsk(Object.assign({}, payload, { question: '请指出这段译文可能不准确或不自然的地方，并给出更好的译法（保留公式原样）。' }));
+      };
+      pill.appendChild(b3);
+      document.body.appendChild(pill);
+      var w = pill.offsetWidth || 200;
+      var left = Math.min(global.innerWidth - w - 10, Math.max(8, rect.left + rect.width / 2 - w / 2));
+      var top = rect.top - pill.offsetHeight - 8;
+      if (top < 60) top = rect.bottom + 8;
+      pill.style.left = left + 'px';
+      pill.style.top = top + 'px';
+    }
+
+    document.addEventListener('mousedown', function (e) {
+      if (pill && !pill.contains(e.target)) hide();
+    });
+    document.addEventListener('keydown', function (e) { if (e.key === 'Escape') hide(); });
+    root.addEventListener('mouseup', function () {
+      setTimeout(function () {
+        var sel = global.getSelection();
+        if (!sel || sel.isCollapsed) { hide(); return; }
+        var text = String(sel.toString() || '').trim();
+        if (text.length < 2) { hide(); return; }
+        var range = sel.getRangeAt(0);
+        var n = range.startContainer;
+        var node = n.nodeType === 1 ? n : n.parentElement;
+        if (!node || !node.closest) { hide(); return; }
+        var cell = node.closest('.bcell');
+        var row = node.closest('.row') || node.closest('.brow');
+        if (!cell || !row || !root.contains(cell)) { hide(); return; }
+        var rect = range.getBoundingClientRect();
+        if (!rect || (!rect.width && !rect.height)) return;
+        show(rect, {
+          paraId: row.dataset.id,
+          selection: text.slice(0, 4000),
+          side: cell.classList.contains('zh') ? 'zh' : 'en'
+        });
+      }, 0);
+    });
+  }
+
+  // ------------------------------------------------------------ 工具条
+
+  function bindToolbar(bar, readerEl) {
+    if (!bar) return;
+    var viewBtns = bar.querySelectorAll('[data-act^="view-"]');
+    function syncView(mode) {
+      viewBtns.forEach(function (b) {
+        var on = b.dataset.act === 'view-' + mode;
+        b.classList.toggle('active', on);
+        b.setAttribute('aria-pressed', on ? 'true' : 'false');
+      });
+    }
+    function api() { return EE.__api; }
+
+    bar.addEventListener('click', function (e) {
+      var btn = e.target.closest('[data-act]');
+      if (!btn) return;
+      var act = btn.dataset.act;
+      var a = api();
+      switch (act) {
+        case 'view-all': case 'view-en': case 'view-zh':
+          if (a) { a.setViewMode(act.slice(5)); syncView(act.slice(5)); }
+          break;
+        case 'toggle-ref':
+          if (a) btn.classList.toggle('active', a.toggleRefs());
+          break;
+        case 'toggle-raw':
+          if (a) btn.classList.toggle('active', a.toggleRaw());
+          break;
+        case 'toggle-font':
+          if (a) btn.classList.toggle('active', a.toggleSerif());
+          break;
+        case 'font-plus':
+          if (a) a.setScale(a.state.scale + 0.1);
+          break;
+        case 'font-minus':
+          if (a) a.setScale(a.state.scale - 0.1);
+          break;
+        case 'toggle-theme':
+          document.body.classList.toggle('dark');
+          document.body.classList.toggle('ee-dark');
+          store.set('ee-theme', document.body.classList.contains('dark') ? 'dark' : 'light');
+          break;
+        case 'toggle-ask':
+          if (EE.askPanel) EE.askPanel.toggle();
+          break;
+        case 'print':
+          global.print();
+          break;
+      }
+    });
+
+    if (store.get('ee-theme') === 'dark') {
+      document.body.classList.add('dark');
+      document.body.classList.add('ee-dark');
+    }
+    if (api()) syncView(api().state.viewMode);
+  }
+
+  EE.renderBilingual = renderBilingual;
+  EE.bindToolbar = bindToolbar;
+  EE.typeset = typeset;
+  EE.highlightTerms = highlightTerms;
+})(window);
+
+</script>
+<script>
+/* EasyEssay · 「问 AI」侧栏
+   选中原文/译文中的任意片段即可提问；回答以 SSE 流式返回并渲染 Markdown + LaTeX。
+   应用内阅读页与导出的离线 HTML 共用；离线 HTML 会连回本地服务。 */
+(function (global) {
+  'use strict';
+
+  var EE = global.EasyEssay = global.EasyEssay || {};
+  var md = EE.md;
+
+  var CHIPS = [
+    '解释我选中的这段内容',
+    '这段在整体证明/论述中起什么作用？',
+    '把这里出现的公式逐步推导一遍',
+    '这段里的关键术语分别是什么意思？',
+    '这段译文有误吗？请给出更准确的译法'
+  ];
+
+  var el = function (tag, cls, html) {
+    var n = document.createElement(tag);
+    if (cls) n.className = cls;
+    if (html != null) n.innerHTML = html;
+    return n;
+  };
+
+  function create(opts) {
+    var state = { paraId: '', selection: '', side: '', history: [], busy: false };
+    var node = opts.node;
+    var docId = opts.docId || '';
+    var apiBase = (opts.apiBase || global.EASYESSay_API || '').replace(/\/$/, '');
+    var onOpen = opts.onOpen, onClose = opts.onClose;
+
+    node.innerHTML = '';
+    var head = el('div', 'ee-ask-head');
+    head.appendChild(el('span', 't', '问 AI'));
+    var ctxLabel = el('span', 'ctx', '未选中内容');
+    head.appendChild(ctxLabel);
+    var closeBtn = el('button', 'ee-btn ghost', '关闭');
+    head.appendChild(closeBtn);
+
+    var body = el('div', 'ee-ask-body');
+    var chips = el('div', 'ee-ask-chips');
+    CHIPS.forEach(function (c) {
+      var b = el('button', 'ee-chip', md.esc(c));
+      b.onclick = function () { ask(c); };
+      chips.appendChild(b);
+    });
+
+    var input = el('div', 'ee-ask-input');
+    var ta = el('textarea');
+    ta.placeholder = '针对选中的内容提问…（Enter 发送，Shift+Enter 换行）';
+    var row = el('div', 'row');
+    var ctxWrap = el('label');
+    var cb = document.createElement('input');
+    cb.type = 'checkbox'; cb.checked = true;
+    ctxWrap.appendChild(cb);
+    ctxWrap.appendChild(document.createTextNode('附带段落上下文'));
+    var spacer = el('span', 'spacer');
+    var sendBtn = el('button', 'ee-btn primary', '发送');
+    row.appendChild(ctxWrap); row.appendChild(spacer); row.appendChild(sendBtn);
+    var hint = el('div', 'ee-ask-hint',
+      apiBase ? '' : '');
+    input.appendChild(ta); input.appendChild(row); input.appendChild(hint);
+
+    node.appendChild(head); node.appendChild(body); node.appendChild(chips); node.appendChild(input);
+
+    function setCtxLabel() {
+      var parts = [];
+      if (state.paraId) parts.push('段落 ' + state.paraId);
+      if (state.selection) parts.push('选中 ' + state.selection.length + ' 字');
+      ctxLabel.textContent = parts.length ? parts.join(' · ') : '未选中内容（将结合当前视口段落）';
+    }
+
+    function addMsg(role, html, cls) {
+      var box = el('div', 'ee-msg ' + (cls || '') + ' ' + role);
+      box.appendChild(el('div', 'who', role === 'user' ? '我' : 'AI'));
+      var bubble = el('div', 'bubble');
+      if (html) bubble.innerHTML = html;
+      box.appendChild(bubble);
+      body.appendChild(box);
+      body.scrollTop = body.scrollHeight;
+      return bubble;
+    }
+
+    function welcome() {
+      body.innerHTML = '';
+      addMsg('assistant',
+        '<p>选中左侧原文或右侧译文里的任意片段，然后点「问 AI」；也可以直接在下面输入问题。</p>' +
+        '<p>回答基于该段落及其前后文，涉及公式会用 LaTeX 正常渲染。</p>');
+    }
+
+    function toggle() {
+      if (node.hidden) open({}); else close();
+    }
+
+    function open(ctx) {
+      ctx = ctx || {};
+      if (ctx.paraId != null) state.paraId = ctx.paraId;
+      if (ctx.selection != null) state.selection = ctx.selection;
+      if (ctx.side != null) state.side = ctx.side;
+      node.hidden = false;
+      setCtxLabel();
+      if (EE.__api && state.paraId) EE.__api.markActive(state.paraId);
+      if (!body.childNodes.length) welcome();
+      if (ctx.question) { ta.value = ''; ask(ctx.question); }
+      else setTimeout(function () { ta.focus(); }, 30);
+      if (onOpen) onOpen();
+    }
+
+    function close() {
+      node.hidden = true;
+      if (EE.__api) EE.__api.markActive('');
+      if (onClose) onClose();
+    }
+
+    async function ask(question) {
+      question = (question || ta.value || '').trim();
+      if (!question || state.busy) return;
+      if (!docId) {
+        addMsg('assistant', '<p>当前文档没有关联的服务端记录，无法提问。</p>', 'err');
+        return;
+      }
+      ta.value = '';
+      state.busy = true;
+      sendBtn.disabled = true;
+      addMsg('user', md.esc(question).replace(/\n/g, '<br>'));
+      var bubble = addMsg('assistant', '<span class="ee-cursor"></span>');
+      var acc = '';
+      var url = apiBase + '/api/docs/' + encodeURIComponent(docId) + '/ask';
+      var payload = {
+        question: question,
+        para_id: cb.checked ? state.paraId : '',
+        selection: state.selection || '',
+        history: state.history.slice(-6)
+      };
+      try {
+        var res = await fetch(url, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload)
+        });
+        if (!res.ok) {
+          var t = await res.text();
+          throw new Error('HTTP ' + res.status + ' ' + t.slice(0, 200));
+        }
+        var reader = res.body.getReader();
+        var dec = new TextDecoder();
+        var buf = '';
+        while (true) {
+          var chunk = await reader.read();
+          if (chunk.done) break;
+          buf += dec.decode(chunk.value, { stream: true });
+          var lines = buf.split('\n');
+          buf = lines.pop();
+          for (var i = 0; i < lines.length; i++) {
+            var line = lines[i].trim();
+            if (!line || line.indexOf('data:') !== 0) continue;
+            var data = line.slice(5).trim();
+            if (data === '[DONE]') continue;
+            var obj = null;
+            try { obj = JSON.parse(data); } catch (e) { continue; }
+            if (obj.error) throw new Error(obj.error);
+            if (obj.delta) {
+              acc += obj.delta;
+              bubble.innerHTML = md.esc(acc).replace(/\n/g, '<br>') + '<span class="ee-cursor"></span>';
+              body.scrollTop = body.scrollHeight;
+            }
+          }
+        }
+        bubble.innerHTML = '';
+        md.richInto(bubble, acc || '（无内容）');
+        if (EE.typeset) EE.typeset(bubble);
+        state.history.push({ role: 'user', content: question });
+        state.history.push({ role: 'assistant', content: acc });
+      } catch (err) {
+        var msg = String(err && err.message || err);
+        var extra = /Failed to fetch|NetworkError|Load failed/.test(msg)
+          ? '<p>连不上本地 EasyEssay 服务。请确认服务正在运行（双击 run.bat），或把本文件放回 EasyEssay 应用里打开。</p>'
+          : '';
+        bubble.parentNode.classList.add('err');
+        bubble.innerHTML = '<p>出错了：' + md.esc(msg.slice(0, 400)) + '</p>' + extra;
+      } finally {
+        state.busy = false;
+        sendBtn.disabled = false;
+        body.scrollTop = body.scrollHeight;
+        if (hint && !apiBase) hint.textContent = '';
+      }
+    }
+
+    closeBtn.onclick = close;
+    sendBtn.onclick = function () { ask(); };
+    ta.addEventListener('keydown', function (e) {
+      if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); ask(); }
+    });
+
+    welcome();
+    node.hidden = true;
+
+    return {
+      mount: true, open: open, close: close, toggle: toggle, state: state, ask: ask,
+      isHidden: function () { return !!node.hidden; }
+    };
+  }
+
+  var instance = null;
+  EE.askPanel = {
+    mount: function (node, opts) {
+      instance = create(Object.assign({ node: node }, opts || {}));
+      EE.askPanel._i = instance;
+      return instance;
+    },
+    open: function (ctx) { if (instance) instance.open(ctx); },
+    close: function () { if (instance) instance.close(); },
+    toggle: function () { if (instance) instance.toggle(); },
+    isOpen: function () { return !!instance && !instance.isHidden(); }
+  };
+})(window);
+
+</script>
+<script id="ee-doc-data" type="application/json">{"id": "20260915-180522-plonk-ec26", "title": "PLONK：基于拉格朗日基置换的通用非交互知识论证", "paragraphs": [{"id": "p0001", "page": 1, "page_end": 1, "kind": "text", "level": 0, "text": "PlonK : Permutations over Lagrange-bases for Oecumenical Noninteractive arguments of Knowledge", "math_ratio": 0.0, "bbox": [106.0, 142.0, 489.4, 203.3]}, {"id": "p0002", "page": 1, "page_end": 1, "kind": "text", "level": 0, "text": "Ariel Gabizon$^{*}$ Zachary J. Williamson Oana Ciobotaru Aztec Aztec Pi Squared", "math_ratio": 0.087, "bbox": [132.7, 237.4, 462.6, 267.4]}, {"id": "p0003", "page": 1, "page_end": 1, "kind": "text", "level": 0, "text": "July 17, 2025", "math_ratio": 0.0, "bbox": [263.6, 279.3, 331.7, 291.2]}, {"id": "p0004", "page": 1, "page_end": 1, "kind": "abstract", "level": 0, "text": "Abstract zk-SNARK constructions that utilize an updatable universal structured reference string remove one of the main obstacles in deploying zk-SNARKs[GKM$^{+}$]. The important work of Maller et al. [MBKM] presented Sonic - the first potentially practical zk-SNARK with fully succinct verification for general arithmetic circuits with such an SRS. However, the version of Sonic enabling fully succinct verification still requires relatively high proof construction overheads. We present a universal SNARK construction with fully succinct verification, and significantly lower prover running time (roughly 7.5-20 times fewer group exponentiations than [MBKM] in the fully succinct verifier mode depending on circuit structure).", "math_ratio": 0.01, "bbox": [275.7, 333.1, 478.8, 456.8]}, {"id": "p0005", "page": 1, "page_end": 1, "kind": "text", "level": 0, "text": "Similarly to [MBKM] we rely on a permutation argument based on Bayer and Groth [BG12]. However, we focus on “Evaluations on a subgroup rather than coefficients of monomials”; which enables simplifying both the permutation argument and the arithmetization step.", "math_ratio": 0.0, "bbox": [116.6, 458.8, 478.8, 504.7]}, {"id": "p0006", "page": 1, "page_end": 1, "kind": "heading", "level": 1, "text": "1 Introduction", "math_ratio": 0.0, "bbox": [89.3, 525.7, 181.9, 540.0]}, {"id": "p0007", "page": 1, "page_end": 1, "kind": "text", "level": 0, "text": "Due to real-world deployments of zk-SNARKs, it has become of significant interest to have the structured reference string (SRS) be constructible in a “universal and updatable” fashion. Meaning that the same SRS can be used for statements about all circuits of a certain bounded size; and that at any point in time the SRS can be updated by a new party, such that the honesty of only one party from all updaters up to that point is required for soundness. For brevity, let us call a zk-SNARK with such a setup process universal.", "math_ratio": 0.0, "bbox": [89.3, 552.7, 506.1, 644.9]}, {"id": "p0008", "page": 1, "page_end": 1, "kind": "text", "level": 0, "text": "For the purpose of this introduction, let us say a zk-SNARK for circuit satisfiability is fully succinct if", "math_ratio": 0.0, "bbox": [89.3, 647.5, 506.0, 672.0]}, {"id": "p0009", "page": 1, "page_end": 1, "kind": "text", "level": 0, "text": "\\* Most of this work was done while the first author was working at Protocol Labs.", "math_ratio": 0.0, "bbox": [101.7, 679.0, 431.4, 691.3]}, {"id": "p0010", "page": 2, "page_end": 2, "kind": "text", "level": 0, "text": "1. The preprocessing$^{1}$ phase/SRS generation run time is quasilinear in circuit size.", "math_ratio": 0.0, "bbox": [102.6, 99.5, 498.4, 114.4]}, {"id": "p0011", "page": 2, "page_end": 2, "kind": "text", "level": 0, "text": "2. The prover run time is quasilinear in circuit size.", "math_ratio": 0.0, "bbox": [102.6, 125.8, 350.3, 136.7]}, {"id": "p0012", "page": 2, "page_end": 2, "kind": "text", "level": 0, "text": "3. The proof length is logarithmic$^{2}$ in circuit size.", "math_ratio": 0.0, "bbox": [102.6, 144.1, 340.9, 159.0]}, {"id": "p0013", "page": 2, "page_end": 2, "kind": "text", "level": 0, "text": "4. The verifier run time is polylogarithmic in circuit size.$^{3}$", "math_ratio": 0.0, "bbox": [102.6, 168.7, 380.5, 181.3]}, {"id": "p0014", "page": 2, "page_end": 2, "kind": "text", "level": 0, "text": "Maller et al. [MBKM] constructed for the first time a universal fully succinct zk- SNARK for circuit satisfiability, called Sonic.", "math_ratio": 0.0, "bbox": [89.3, 195.2, 506.0, 219.7]}, {"id": "p0015", "page": 2, "page_end": 2, "kind": "text", "level": 0, "text": "[MBKM] also give a version of Sonic with dramatically improved prover run time, at the expense of efficient verification only in a certain amortized sense.", "math_ratio": 0.0, "bbox": [89.3, 222.3, 506.0, 246.8]}, {"id": "p0016", "page": 2, "page_end": 2, "kind": "heading", "level": 2, "text": "1.1 Our results", "math_ratio": 0.0, "bbox": [89.3, 264.2, 169.6, 276.1]}, {"id": "p0017", "page": 2, "page_end": 2, "kind": "text", "level": 0, "text": "In this work we give a universal fully-succinct zk-SNARK with significantly improved prover run time compared to fully-succinct Sonic.", "math_ratio": 0.0, "bbox": [89.3, 285.6, 506.0, 310.0]}, {"id": "p0018", "page": 2, "page_end": 2, "kind": "text", "level": 0, "text": "At a high level our improvements stem from a more direct arithmetization of a circuit as compared to the [BCC$^{+}$ 16]-inspired arithmetization of [MBKM]. This is combined with a permutation argument over univariate evaluations on a multiplicative subgroup rather than over coefficients of a bivariate polynomial as in [MBKM].", "math_ratio": 0.004, "bbox": [89.3, 312.7, 506.1, 364.2]}, {"id": "p0019", "page": 2, "page_end": 2, "kind": "text", "level": 0, "text": "In a nutshell, one reason multiplicative subgroups are useful is that several protocols, including Sonic , use a permutation argument based on Bayer and Groth [BG12]. Ultimately, in the “grand product argument”, this reduces to checking relations between coefficients of polynomials at “neighbouring monomials”.", "math_ratio": 0.0, "bbox": [89.3, 366.9, 506.0, 418.4]}, {"id": "p0020", "page": 2, "page_end": 2, "kind": "text", "level": 0, "text": "We observe that if we think of the points$x,$ g$\\cdot x$ as neighbours, where g is a generator of a multiplicative subgroup of a field F , it is very convenient to check relations between different polynomials at such pairs of points.", "math_ratio": 0.0, "bbox": [89.3, 420.9, 506.0, 459.1]}, {"id": "p0021", "page": 2, "page_end": 2, "kind": "text", "level": 0, "text": "A related convenience is that multiplicative subgroups interact well with Lagrange bases. For example, suppose$H \\subset F$ is a multiplicative subgroup of order$n$ , and$x\\in H$. The polynomial$L _{x}$ of degree$n-$ 1 that vanishes on$H \\backslash \\{x \\}$ and has$L_{x}$($x$ )$=$ 1, has a very sparse representation of the form $L_{x}$($X ) = c^{x}$($X^{n}-$ 1) ($X - x$ )$,$ for a constant c$_{x}$ . This is beneficial when constructing an efficiently verifiable [BG12]- style permutation argument in terms of polynomial identities.", "math_ratio": 0.225, "bbox": [89.3, 461.7, 506.0, 585.5]}, {"id": "p0022", "page": 2, "page_end": 2, "kind": "text", "level": 0, "text": "1 We use the term SNARK in this paper for what is sometimes called a “SNARK with preprocessing”(see e.g. [GGPR13]) where one allows a one-time verifier computation that is polynomial rather than polylogarithmic in the circuit size. In return, the SNARK is expected to work for all non-uniform circuits , rather than only statements about uniform computation.", "math_ratio": 0.0, "bbox": [89.3, 594.2, 506.1, 637.5]}, {"id": "p0023", "page": 2, "page_end": 2, "kind": "text", "level": 0, "text": "2 From a theoretical point of view, polylogarithmic proof length is more natural; but logarithmic nicely captures recent constructions with a constant number of group elements, and sometimes is a good indication of the “practicality barrier”.", "math_ratio": 0.0, "bbox": [89.3, 638.0, 506.1, 670.4]}, {"id": "p0024", "page": 2, "page_end": 2, "kind": "text", "level": 0, "text": "3 In many definitions, only proof size is required to be polylogarithmic. For example, in the terminology of [GGPR13], additionally requiring polylogarithmic verifier run time means the SNARK is unsubtle.", "math_ratio": 0.0, "bbox": [89.3, 670.9, 506.1, 692.3]}], "translations": {"p0001": {"zh": "PlonK：基于拉格朗日基置换的通用非交互知识论证", "terms": []}, "p0002": {"zh": "Ariel Gabizon$^{*}$　Zachary J. Williamson　Oana Ciobotaru　（所属机构：Aztec、Aztec、Pi Squared）", "terms": [], "en": "Ariel Gabizon$^{*}$　Zachary J. Williamson　Oana Ciobotaru　—　Aztec · Aztec · Pi Squared"}, "p0003": {"zh": "2025 年 7 月 17 日", "terms": []}, "p0004": {"zh": "利用可更新通用结构化参考串（structured reference string, SRS）的 zk-SNARK 方案，消除了部署 zk-SNARK 的主要障碍之一 [GKM$^{+}$]。Maller 等人的重要工作 [MBKM] 给出了 Sonic —— 首个在具有此类 SRS 的通用算术电路上、具备完全简洁（fully succinct）验证且具备实用潜力的 zk-SNARK。然而，那个能够实现完全简洁验证的 Sonic 版本，其证明构造开销仍然相对偏高。本文给出一种通用 SNARK 构造，具备完全简洁验证，且证明者运行时间显著降低（在完全简洁验证模式下，依据电路结构不同，群指数运算次数约为 [MBKM] 的 1/7.5 至 1/20）。", "terms": [{"en": "structured reference string, SRS", "zh": "结构化参考串"}, {"en": "zk-SNARK", "zh": "零知识简洁非交互式知识论证"}, {"en": "fully succinct", "zh": "完全简洁"}], "en": "Abstract. zk-SNARK constructions that utilize an updatable universal structured reference string remove one of the main obstacles in deploying zk-SNARKs [GKM$^{+}$]. The important work of Maller et al. [MBKM] presented Sonic — the first potentially practical zk-SNARK with fully succinct verification for general arithmetic circuits with such an SRS. However, the version of Sonic enabling fully succinct verification still requires relatively high proof construction overheads. We present a universal SNARK construction with fully succinct verification, and significantly lower prover running time (roughly $7.5$–$20$ times fewer group exponentiations than [MBKM] in the fully succinct verifier mode, depending on circuit structure)."}, "p0005": {"zh": "与 [MBKM] 类似，我们依赖基于 Bayer 和 Groth [BG12] 的置换论证（permutation argument）。不同之处在于，我们关注的是「在子群上取值的求值形式，而非单项式系数」；这使得置换论证与算术化（arithmetization）步骤都能得到简化。", "terms": [{"en": "permutation argument", "zh": "置换论证"}, {"en": "arithmetization", "zh": "算术化"}]}, "p0006": {"zh": "1　引言", "terms": []}, "p0007": {"zh": "由于 zk-SNARK 已在真实场景中部署，如何让结构化参考串（SRS）以「通用且可更新」的方式构造出来，已成为一个备受关注的问题。其含义是：同一个 SRS 可用于关于某个有界规模内所有电路的陈述；并且在任意时刻，SRS 都可以被新的参与方更新，只要截至该时刻的全部更新者中有一个是诚实的，可靠性（soundness）即可成立。为简洁起见，我们把具有这种设置过程的 zk-SNARK 称为通用的。", "terms": [{"en": "soundness", "zh": "可靠性"}, {"en": "universal", "zh": "通用的"}]}, "p0008": {"zh": "为便于本引言的叙述，我们称一个用于电路可满足性（circuit satisfiability）的 zk-SNARK 是完全简洁的，如果：", "terms": [{"en": "circuit satisfiability", "zh": "电路可满足性"}]}, "p0009": {"zh": "$^{*}$ 本工作的大部分内容是在第一作者任职于 Protocol Labs 期间完成的。", "terms": [], "en": "$^{*}$ Most of this work was done while the first author was working at Protocol Labs."}, "p0010": {"zh": "1. 预处理$^{1}$阶段／SRS 生成的运行时间在电路规模上是准线性的。", "terms": [{"en": "quasilinear", "zh": "准线性的"}], "en": "1. The preprocessing$^{1}$ phase / SRS generation run time is quasilinear in circuit size."}, "p0011": {"zh": "2. 证明者（prover）的运行时间在电路规模上是准线性的。", "terms": [{"en": "prover", "zh": "证明者"}]}, "p0012": {"zh": "3. 证明长度在电路规模上是对数级的。$^{2}$", "terms": [], "en": "3. The proof length$^{2}$ is logarithmic in circuit size."}, "p0013": {"zh": "4. 验证者$^{3}$的运行时间在电路规模上是多对数级的。", "terms": [{"en": "verifier", "zh": "验证者"}], "en": "4. The verifier$^{3}$ run time is polylogarithmic in circuit size."}, "p0014": {"zh": "Maller 等人 [MBKM] 首次构造出用于电路可满足性的通用完全简洁 zk-SNARK，称为 Sonic。", "terms": [], "en": "Maller et al. [MBKM] constructed for the first time a universal fully succinct zk-SNARK for circuit satisfiability, called Sonic."}, "p0015": {"zh": "[MBKM] 还给出了 Sonic 的一个版本，其证明者运行时间得到极大改善，代价是只能在某种摊还（amortized）意义下实现高效验证。", "terms": [{"en": "amortized", "zh": "摊还的"}]}, "p0016": {"zh": "1.1　我们的结果", "terms": []}, "p0017": {"zh": "本文给出一个通用完全简洁的 zk-SNARK，与完全简洁的 Sonic 相比，其证明者运行时间显著改善。", "terms": []}, "p0018": {"zh": "从宏观上看，我们的改进源自对电路更为直接的算术化，而不是 [MBKM] 那种受 [BCC$^{+}$16] 启发的算术化。与之相结合的是：置换论证建立在乘法子群上的一元求值之上，而不是像 [MBKM] 那样建立在二元多项式的系数之上。", "terms": [{"en": "multiplicative subgroup", "zh": "乘法子群"}], "en": "At a high level our improvements stem from a more direct arithmetization of a circuit as compared to the [BCC$^{+}$16]-inspired arithmetization of [MBKM]. This is combined with a permutation argument over univariate evaluations on a multiplicative subgroup rather than over coefficients of a bivariate polynomial as in [MBKM]."}, "p0019": {"zh": "简而言之，乘法子群之所以有用，原因之一是包括 Sonic 在内的若干协议都使用了基于 Bayer 和 Groth [BG12] 的置换论证。归根结底，在「大乘积论证」中，这被归约为检查「相邻单项式」处各多项式系数之间的关系。", "terms": [{"en": "grand product argument", "zh": "大乘积论证"}, {"en": "monomial", "zh": "单项式"}], "en": "In a nutshell, one reason multiplicative subgroups are useful is that several protocols, including Sonic, use a permutation argument based on Bayer and Groth [BG12]. Ultimately, in the “grand product argument”, this reduces to checking relations between coefficients of polynomials at “neighbouring monomials”."}, "p0020": {"zh": "我们注意到，如果把点 $x$ 与 $g \\cdot x$ 视为相邻的点对（其中 $g$ 是域 $F$ 的某个乘法子群的生成元），那么在这样的点对上检查不同多项式之间的关系将非常方便。", "terms": [{"en": "generator", "zh": "生成元"}], "en": "We observe that if we think of the points $x$, $g \\cdot x$ as neighbours, where $g$ is a generator of a multiplicative subgroup of a field $F$, it is very convenient to check relations between different polynomials at such pairs of points."}, "p0021": {"zh": "另一个相关的便利之处是，乘法子群与拉格朗日基（Lagrange basis）配合得很好。例如，设 $H \\subset F$ 是阶为 $n$ 的乘法子群，且 $x \\in H$。那么满足「在 $H \\backslash \\{x\\}$ 上取值为零」且 $L_x(x) = 1$ 的 $n-1$ 次多项式 $L_x$，具有形式非常稀疏的表示：\n\n$$L_x(X) = c_x \\cdot \\frac{X^{n} - 1}{X - x}$$\n\n其中 $c_x$ 为常数。在依据多项式恒等式构造可高效验证的 [BG12] 型置换论证时，这一点非常有利。", "terms": [{"en": "Lagrange basis", "zh": "拉格朗日基"}, {"en": "polynomial identity", "zh": "多项式恒等式"}], "en": "A related convenience is that multiplicative subgroups interact well with Lagrange bases. For example, suppose $H \\subset F$ is a multiplicative subgroup of order $n$, and $x \\in H$. The polynomial $L_x$ of degree $n-1$ that vanishes on $H \\backslash \\{x\\}$ and has $L_x(x) = 1$ has a very sparse representation of the form\n\n$$L_x(X) = c_x \\cdot \\frac{X^{n} - 1}{X - x}$$\n\nfor a constant $c_x$. This is beneficial when constructing an efficiently verifiable [BG12]-style permutation argument in terms of polynomial identities."}, "p0022": {"zh": "1　本文使用「SNARK」一词指代有时被称为「带预处理的 SNARK」的对象（参见 [GGPR13] 等），其中允许一次性验证者计算，其复杂度在电路规模上是多项式级而非多对数级。作为交换，该 SNARK 被期望适用于所有非一致（non-uniform）电路，而不仅仅是关于一致计算的陈述。", "terms": [{"en": "non-uniform circuit", "zh": "非一致电路"}], "en": "1 We use the term SNARK in this paper for what is sometimes called a “SNARK with preprocessing” (see e.g. [GGPR13]) where one allows a one-time verifier computation that is polynomial rather than polylogarithmic in the circuit size. In return, the SNARK is expected to work for all non-uniform circuits, rather than only statements about uniform computation."}, "p0023": {"zh": "2　从理论角度看，多对数的证明长度更为自然；但对数长度很好地刻画了近期那些使用常数个群元素的构造，有时也是「实用性壁垒」的良好指标。", "terms": []}, "p0024": {"zh": "3　在许多定义中，只要求证明长度是多对数的。例如在 [GGPR13] 的术语体系下，若额外要求验证者运行时间为多对数，则该 SNARK 被称为 unsubtle（非精妙的）。", "terms": []}}, "meta": {"source_name": "plonk.pdf", "page_count": 34, "model": "（样例：人工翻译 · 未调用 API）", "created_at": "2026-09-15 18:05:22", "stats": {"paragraphs": 24, "translated": 24}}}</script>
+<script>
+(function () {
+  var doc = JSON.parse(document.getElementById('ee-doc-data').textContent);
+  var reader = document.getElementById('ee-reader');
+  EasyEssay.askPanel.mount(document.getElementById('ee-ask'), {
+    docId: doc.id,
+    apiBase: window.EASYESSay_API
+  });
+  EasyEssay.renderBilingual(reader, doc, {
+    viewMode: 'all',
+    onAsk: function (payload) { EasyEssay.askPanel.open(payload); }
+  });
+  EasyEssay.bindToolbar(document.querySelector('.ee-topbar'), reader);
+})();
+</script>
+</body>
+</html>

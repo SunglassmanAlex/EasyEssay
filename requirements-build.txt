@@ -1,0 +1,3 @@
+# 打包成可执行文件（发布到 GitHub Releases 用）所需的额外依赖
+# 用法：pip install -r requirements-build.txt && python packaging/build.py --zip
+pyinstaller>=6.6

@@ -1,0 +1,489 @@
+/* EasyEssay · 双栏对照渲染核心
+   左栏英文原文 / 右栏中文译文，逐段严格对齐。排版对齐「论文中英对照」成品的做法：
+   - 衬线正文 + 左侧页码栏（p.5 / p.1–2）
+   - 页与页之间插入分页标记行；被页边界切断的段落在原位插入换页点
+   - 独立公式放进公式框；表格左右各完整一份（数值 / 行序 / 列义一致）
+   - 章节标题 / 图表题注 / 参考文献分级；页尾「全文完」
+   - 术语高亮、选中片段浮出「问 AI」、右下角深浅色切换
+   应用内阅读页与导出的离线 HTML 共用这份代码。 */
+(function (global) {
+  'use strict';
+
+  var EE = global.EasyEssay = global.EasyEssay || {};
+  var md = EE.md;
+
+  function el(tag, cls, html) {
+    var n = document.createElement(tag);
+    if (cls) n.className = cls;
+    if (html != null) n.innerHTML = html;
+    return n;
+  }
+
+  // localStorage 在 file:// 等 opaque origin 下访问会直接抛 SecurityError，
+  // 导出的离线 HTML 正是这种场景，必须包起来。
+  var store = {
+    get: function (k) {
+      try { return global.localStorage ? global.localStorage.getItem(k) : null; } catch (e) { return null; }
+    },
+    set: function (k, v) {
+      try { if (global.localStorage) global.localStorage.setItem(k, v); } catch (e) { }
+    }
+  };
+
+  function typeset(root) {
+    function attempt() {
+      var MJ = global.MathJax;
+      if (!MJ) return false;
+      if (MJ.startup && MJ.startup.promise) {
+        MJ.startup.promise.then(function () {
+          try { MJ.typesetPromise([root]).catch(function () { }); } catch (e) { }
+        }).catch(function () { });
+        return true;
+      }
+      if (typeof MJ.typesetPromise === 'function') {
+        try { MJ.typesetPromise([root]).catch(function () { }); return true; } catch (e) { return false; }
+      }
+      return false;
+    }
+    if (attempt()) return;
+    var tries = 0;
+    var timer = setInterval(function () {
+      tries += 1;
+      if (attempt() || tries > 66) clearInterval(timer);
+    }, 150);
+  }
+
+  // ------------------------------------------------------------ 术语高亮
+
+  function highlightTerms(root, terms, lang) {
+    if (!terms || !terms.length) return;
+    var pairs = [];
+    terms.forEach(function (t) {
+      var needle = lang === 'zh' ? t.zh : t.en;
+      if (!needle || needle.length < 2) return;
+      pairs.push({ needle: needle, tip: [t.en, t.zh].filter(Boolean).join(' · ') });
+    });
+    if (!pairs.length) return;
+    pairs.sort(function (a, b) { return b.needle.length - a.needle.length; });
+
+    var walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, {
+      acceptNode: function (node) {
+        if (!node.nodeValue || !node.nodeValue.trim()) return NodeFilter.FILTER_REJECT;
+        var p = node.parentElement;
+        while (p && p !== root) {
+          var tag = p.tagName || '';
+          if (p.classList && (p.classList.contains('math') || p.classList.contains('term')
+            || p.classList.contains('term-en'))) return NodeFilter.FILTER_REJECT;
+          if (tag === 'CODE' || tag === 'PRE' || tag.indexOf('MJX') === 0) return NodeFilter.FILTER_REJECT;
+          p = p.parentElement;
+        }
+        return NodeFilter.FILTER_ACCEPT;
+      }
+    });
+    var nodes = [];
+    while (walker.nextNode()) nodes.push(walker.currentNode);
+
+    nodes.forEach(function (node) {
+      var text = node.nodeValue;
+      var hit = null, at = -1;
+      for (var i = 0; i < pairs.length; i++) {
+        var idx = text.indexOf(pairs[i].needle);
+        if (idx >= 0 && (at < 0 || idx < at)) { at = idx; hit = pairs[i]; }
+      }
+      if (!hit) return;
+      var frag = document.createDocumentFragment();
+      var rest = text;
+      while (at >= 0) {
+        if (at > 0) frag.appendChild(document.createTextNode(rest.slice(0, at)));
+        var span = el('span', lang === 'zh' ? 'term' : 'term-en', md.esc(hit.needle));
+        span.title = hit.tip;
+        frag.appendChild(span);
+        rest = rest.slice(at + hit.needle.length);
+        at = -1; hit = null;
+        for (var j = 0; j < pairs.length; j++) {
+          var k = rest.indexOf(pairs[j].needle);
+          if (k >= 0 && (at < 0 || k < at)) { at = k; hit = pairs[j]; }
+        }
+      }
+      if (rest) frag.appendChild(document.createTextNode(rest));
+      if (node.parentNode) node.parentNode.replaceChild(frag, node);
+    });
+  }
+
+  // ------------------------------------------------------------ 单元格
+
+  /** 独立公式：把 $$...$$ 提出来放进公式框；残留文字（公式编号等）另起一行 */
+  function fillEquationCell(cell, text) {
+    var m = String(text || '').match(/\$\$[\s\S]+?\$\$|\$[^$\n]+?\$/);
+    if (m && m[0].length >= text.replace(/\s/g, '').length * 0.55) {
+      var rest = (text.slice(0, m.index) + ' ' + text.slice(m.index + m[0].length)).trim();
+      var box = el('div', 'eq');
+      box.innerHTML = md.esc(m[0].indexOf('$$') === 0 ? m[0] : '$' + m[0] + '$');
+      cell.appendChild(box);
+      if (rest) cell.appendChild(el('div', 'eq-tag', md.inlineMd(rest)));
+      return;
+    }
+    md.richInto(cell, text);
+  }
+
+  function fillCell(cell, para, kind, pageBreak) {
+    var text = para.text || '';
+    if (kind === 'equation') { fillEquationCell(cell, text); return; }
+    if (pageBreak && typeof pageBreak.at === 'number' && pageBreak.at > 0) {
+      // 段落被页边界切断：在英文栏原位插入换页点
+      var before = text.slice(0, pageBreak.at);
+      var after = text.slice(pageBreak.at);
+      md.richInto(cell, before);
+      cell.appendChild(el('span', 'pgmark',
+        '— 换页 · 原文第 ' + pageBreak.from + ' 页 → 第 ' + pageBreak.to + ' 页 —'));
+      var cont = el('span');
+      md.richInto(cont, after);
+      while (cont.firstChild) cell.appendChild(cont.firstChild);
+      return;
+    }
+    md.richInto(cell, text);
+  }
+
+  // ------------------------------------------------------------ 论文头部
+
+  function buildPaperHead(doc, stats, opts) {
+    var head = el('header', 'paper-head');
+    var title = doc.title || (doc.meta || {}).title || 'EasyEssay';
+    head.appendChild(el('h1', null, md.esc(title) + ' · 全文中英对照'));
+
+    var zhTitle = (doc.translations || {})[opts.titleParaId || 'p0001'];
+    var sub = zhTitle && zhTitle.zh ? zhTitle.zh : (opts.subtitle || '');
+    if (sub) head.appendChild(el('p', 'sub', md.inlineMd(sub.split('\n')[0])));
+
+    var authors = '';
+    var raw = (doc.paragraphs || [])[opts.authorParaIndex == null ? 1 : opts.authorParaIndex];
+    if (raw && raw.text && raw.text.length < 400) {
+      authors = raw.text.replace(/\$[^$]*\$/g, '').replace(/\s+/g, ' ').trim();
+    }
+    var metaBits = [];
+    if (authors) metaBits.push(md.esc(authors));
+    if ((doc.meta || {}).page_count) metaBits.push('全文 ' + (doc.meta || {}).page_count + ' 页');
+    if (stats.paragraphs) metaBits.push('共 ' + stats.paragraphs + ' 段');
+    if (stats.translated) metaBits.push('已译 ' + stats.translated + ' 段');
+    if ((doc.meta || {}).settings && (doc.meta || {}).settings.model) {
+      metaBits.push('模型 ' + md.esc((doc.meta || {}).settings.model));
+    }
+    if (metaBits.length) head.appendChild(el('p', 'meta', metaBits.join(' · ')));
+
+    head.appendChild(el('p', 'hint',
+      '左 = 英文原文 · 右 = 中文译文，段落逐一对齐，两栏分界线自首页至参考文献保持同一条。'
+      + '最左侧页栏标出每段在 PDF 中的<b>起始页</b>；每两页之间有一条虚线<b>分页标记行</b>。'
+      + '若某段原文被页边界切断，则标为区间 <code>p.1–2</code>，并在<b>英文栏的原位</b>插入换页点。'
+      + '表格在左右两栏各完整复现一份（左英文表头 / 右中文表头），<b>数值、行序、列义与原文一致</b>。'
+      + '公式由 MathJax 渲染；若显示为 <code>$…$</code> 源码，联网后刷新即可。'));
+    return head;
+  }
+
+  // ------------------------------------------------------------ 主渲染
+
+  function renderBilingual(container, doc, opts) {
+    opts = opts || {};
+    var translations = doc.translations || {};
+    var paragraphs = doc.paragraphs || [];
+    var state = {
+      viewMode: opts.viewMode || 'all',
+      hideRefs: !!opts.hideRefs,
+      showRaw: false,
+      scale: parseFloat(store.get('ee-scale') || '1') || 1
+    };
+
+    var wrapMeta = (doc.meta || {}).stats || {};
+    var stats = {
+      paragraphs: wrapMeta.paragraphs || paragraphs.length,
+      translated: wrapMeta.translated || Object.keys(translations).length
+    };
+
+    container.innerHTML = '';
+    container.classList.add('ee-reader');
+    container.classList.remove('view-en', 'view-zh', 'hide-refs', 'show-raw');
+
+    var wrap = el('div', 'wrap');
+    container.appendChild(wrap);
+
+    if (opts.header !== false) wrap.appendChild(buildPaperHead(doc, stats, opts));
+
+    var colhead = el('div', 'colhead');
+    colhead.appendChild(el('div', 'l', 'English（原文）'));
+    colhead.appendChild(el('div', 'r', '中文译文'));
+    wrap.appendChild(colhead);
+
+    var rowMap = {};
+    var switches = [];
+    var toc = [];
+    var prevPageEnd = null;
+
+    paragraphs.forEach(function (p) {
+      var from = p.page || 1;
+      var to = p.page_end || from;
+
+      // 页与页之间插入分页标记行
+      if (prevPageEnd != null && from !== prevPageEnd) {
+        var br = el('div', 'row pbreak');
+        br.dataset.pg = 'p.' + prevPageEnd + '→' + from;
+        var txt = '— 换页 · 原文第 ' + prevPageEnd + ' 页 → 第 ' + from + ' 页 —';
+        br.appendChild(el('div', 'en', txt));
+        br.appendChild(el('div', 'zh', txt));
+        wrap.appendChild(br);
+      }
+
+      var tr = translations[p.id] || {};
+      var kind = p.kind || 'text';
+      var cls = 'row brow';
+      if (kind === 'title') cls += ' head';
+      else if (kind === 'heading') cls += (p.level && p.level >= 2) ? ' sub' : ' head';
+      else if (kind === 'caption') cls += ' caption';
+      else if (kind === 'equation') cls += ' eq';
+      else if (kind === 'reference') cls += ' tiny ref';
+      var row = el('section', cls);
+      row.id = 'para-' + p.id;
+      row.dataset.id = p.id;
+      row.dataset.pg = (to !== from) ? ('p.' + from + '–' + to) : ('p.' + from);
+      if (kind === 'heading' || kind === 'title') {
+        row.dataset.heading = p.level || 1;
+        toc.push({ id: p.id, label: (p.text || '').slice(0, 90),
+                   level: kind === 'title' ? 1 : (p.level || 1) });
+      }
+
+      var en = el('div', 'en bcell');
+      var zh = el('div', 'zh bcell');
+
+      // 左栏优先用「重建原文」；可一键切回 PDF 直抽
+      var rebuilt = typeof tr.en === 'string' && tr.en.trim() && tr.en !== p.text;
+      var pageBreak = (to !== from && typeof p.page_break_at === 'number')
+        ? { at: p.page_break_at, from: from, to: to } : null;
+      if (rebuilt) {
+        fillCell(en, { kind: kind, text: state.showRaw ? p.text : tr.en }, kind,
+                 state.showRaw ? pageBreak : null);
+        en.dataset.rebuilt = '1';
+        en.title = '左栏为「重建原文」（公式已还原为标准 LaTeX）。点顶栏「原始抽取」可切回 PDF 直抽的原始文本。';
+        switches.push({ cell: en, para: p, fixed: tr.en, pageBreak: pageBreak });
+      } else {
+        fillCell(en, p, kind, pageBreak);
+      }
+
+      if (tr.zh) {
+        fillCell(zh, { kind: kind, text: tr.zh }, kind);
+        if (tr.terms && tr.terms.length) {
+          highlightTerms(en, tr.terms, 'en');
+          highlightTerms(zh, tr.terms, 'zh');
+        }
+      } else {
+        zh.classList.add('pending');
+        zh.appendChild(el('div', 'empty',
+          kind === 'equation' ? '（公式无需翻译）' : '待翻译…'));
+      }
+
+      row.appendChild(en);
+      row.appendChild(zh);
+      wrap.appendChild(row);
+      rowMap[p.id] = row;
+      prevPageEnd = to;
+    });
+
+    // 页尾
+    var end = el('div', 'row tiny');
+    end.dataset.pg = '';
+    end.appendChild(el('div', 'en', '— End of paper —'));
+    end.appendChild(el('div', 'zh', '— 全文完 —'));
+    wrap.appendChild(end);
+
+    var api = {
+      state: state,
+      toc: toc,
+      typeset: function () { typeset(wrap); },
+      setViewMode: function (mode) {
+        state.viewMode = mode;
+        container.classList.toggle('view-en', mode === 'en');
+        container.classList.toggle('view-zh', mode === 'zh');
+        return mode;
+      },
+      toggleRefs: function (force) {
+        state.hideRefs = force == null ? !state.hideRefs : !!force;
+        container.classList.toggle('hide-refs', state.hideRefs);
+        return state.hideRefs;
+      },
+      toggleRaw: function (force) {
+        state.showRaw = force == null ? !state.showRaw : !!force;
+        container.classList.toggle('show-raw', state.showRaw);
+        switches.forEach(function (s) {
+          s.cell.innerHTML = '';
+          if (state.showRaw) {
+            fillCell(s.cell, s.para, s.para.kind || 'text', s.pageBreak);
+          } else {
+            fillCell(s.cell, { kind: s.para.kind, text: s.fixed }, s.para.kind || 'text', null);
+          }
+        });
+        if (switches.length) typeset(wrap);
+        return state.showRaw;
+      },
+      setScale: function (scale) {
+        state.scale = Math.min(1.8, Math.max(0.75, scale));
+        var r = document.documentElement.style;
+        r.setProperty('--fs-en', (15.5 * state.scale).toFixed(2) + 'px');
+        r.setProperty('--fs-zh', (15.5 * state.scale).toFixed(2) + 'px');
+        store.set('ee-scale', String(state.scale));
+        return state.scale;
+      },
+      toggleSerif: function (force) {
+        var sans = force == null ? !document.body.classList.contains('ee-sans') : !!force;
+        document.body.classList.toggle('ee-sans', sans);
+        store.set('ee-font', sans ? 'sans' : 'serif');
+        return sans;
+      },
+      scrollTo: function (paraId) {
+        var row = rowMap[paraId];
+        if (row) row.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      },
+      markActive: function (paraId) {
+        Object.keys(rowMap).forEach(function (k) { rowMap[k].classList.remove('active'); });
+        if (rowMap[paraId]) rowMap[paraId].classList.add('active');
+      },
+      rows: rowMap
+    };
+
+    api.setViewMode(state.viewMode);
+    if (state.hideRefs) container.classList.add('hide-refs');
+    api.setScale(state.scale);
+    if (store.get('ee-font') === 'sans') document.body.classList.add('ee-sans');
+    typeset(wrap);
+    if (opts.onAsk) attachSelection(container, opts.onAsk);
+    if (opts.themeToggle !== false) {
+      var tgl = el('button', 'tgl', '切换深/浅色');
+      tgl.onclick = function () { document.body.classList.toggle('dark'); };
+      container.appendChild(tgl);
+    }
+    EE.__api = api;
+    EE.__wrap = wrap;
+    return api;
+  }
+
+  // ------------------------------------------------------------ 选中即问
+
+  function attachSelection(root, onAsk) {
+    var pill = null;
+    function hide() { if (pill) { pill.remove(); pill = null; } }
+
+    function show(rect, payload) {
+      hide();
+      pill = el('div', 'ee-selbtn');
+      var b1 = el('button', null, '问 AI');
+      b1.onclick = function () { hide(); onAsk(payload); };
+      pill.appendChild(b1);
+      var b2 = el('button', null, '解释公式');
+      b2.onclick = function () {
+        hide();
+        onAsk(Object.assign({}, payload, { question: '请逐步解释这段内容里的公式：每个符号的含义、取值范围，以及整体在证明中的作用。' }));
+      };
+      pill.appendChild(b2);
+      var b3 = el('button', null, '译得更准');
+      b3.onclick = function () {
+        hide();
+        onAsk(Object.assign({}, payload, { question: '请指出这段译文可能不准确或不自然的地方，并给出更好的译法（保留公式原样）。' }));
+      };
+      pill.appendChild(b3);
+      document.body.appendChild(pill);
+      var w = pill.offsetWidth || 200;
+      var left = Math.min(global.innerWidth - w - 10, Math.max(8, rect.left + rect.width / 2 - w / 2));
+      var top = rect.top - pill.offsetHeight - 8;
+      if (top < 60) top = rect.bottom + 8;
+      pill.style.left = left + 'px';
+      pill.style.top = top + 'px';
+    }
+
+    document.addEventListener('mousedown', function (e) {
+      if (pill && !pill.contains(e.target)) hide();
+    });
+    document.addEventListener('keydown', function (e) { if (e.key === 'Escape') hide(); });
+    root.addEventListener('mouseup', function () {
+      setTimeout(function () {
+        var sel = global.getSelection();
+        if (!sel || sel.isCollapsed) { hide(); return; }
+        var text = String(sel.toString() || '').trim();
+        if (text.length < 2) { hide(); return; }
+        var range = sel.getRangeAt(0);
+        var n = range.startContainer;
+        var node = n.nodeType === 1 ? n : n.parentElement;
+        if (!node || !node.closest) { hide(); return; }
+        var cell = node.closest('.bcell');
+        var row = node.closest('.row') || node.closest('.brow');
+        if (!cell || !row || !root.contains(cell)) { hide(); return; }
+        var rect = range.getBoundingClientRect();
+        if (!rect || (!rect.width && !rect.height)) return;
+        show(rect, {
+          paraId: row.dataset.id,
+          selection: text.slice(0, 4000),
+          side: cell.classList.contains('zh') ? 'zh' : 'en'
+        });
+      }, 0);
+    });
+  }
+
+  // ------------------------------------------------------------ 工具条
+
+  function bindToolbar(bar, readerEl) {
+    if (!bar) return;
+    var viewBtns = bar.querySelectorAll('[data-act^="view-"]');
+    function syncView(mode) {
+      viewBtns.forEach(function (b) {
+        var on = b.dataset.act === 'view-' + mode;
+        b.classList.toggle('active', on);
+        b.setAttribute('aria-pressed', on ? 'true' : 'false');
+      });
+    }
+    function api() { return EE.__api; }
+
+    bar.addEventListener('click', function (e) {
+      var btn = e.target.closest('[data-act]');
+      if (!btn) return;
+      var act = btn.dataset.act;
+      var a = api();
+      switch (act) {
+        case 'view-all': case 'view-en': case 'view-zh':
+          if (a) { a.setViewMode(act.slice(5)); syncView(act.slice(5)); }
+          break;
+        case 'toggle-ref':
+          if (a) btn.classList.toggle('active', a.toggleRefs());
+          break;
+        case 'toggle-raw':
+          if (a) btn.classList.toggle('active', a.toggleRaw());
+          break;
+        case 'toggle-font':
+          if (a) btn.classList.toggle('active', a.toggleSerif());
+          break;
+        case 'font-plus':
+          if (a) a.setScale(a.state.scale + 0.1);
+          break;
+        case 'font-minus':
+          if (a) a.setScale(a.state.scale - 0.1);
+          break;
+        case 'toggle-theme':
+          document.body.classList.toggle('dark');
+          document.body.classList.toggle('ee-dark');
+          store.set('ee-theme', document.body.classList.contains('dark') ? 'dark' : 'light');
+          break;
+        case 'toggle-ask':
+          if (EE.askPanel) EE.askPanel.toggle();
+          break;
+        case 'print':
+          global.print();
+          break;
+      }
+    });
+
+    if (store.get('ee-theme') === 'dark') {
+      document.body.classList.add('dark');
+      document.body.classList.add('ee-dark');
+    }
+    if (api()) syncView(api().state.viewMode);
+  }
+
+  EE.renderBilingual = renderBilingual;
+  EE.bindToolbar = bindToolbar;
+  EE.typeset = typeset;
+  EE.highlightTerms = highlightTerms;
+})(window);

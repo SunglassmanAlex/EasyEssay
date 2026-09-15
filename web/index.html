@@ -1,0 +1,168 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>EasyEssay · 论文翻译助手</title>
+<link rel="stylesheet" href="/static/css/reader.css">
+<link rel="stylesheet" href="/static/css/app.css">
+</head>
+<body>
+
+<header class="ee-topbar">
+  <div class="ee-topbar-left">
+    <span class="ee-logo">EasyEssay</span>
+    <span class="ee-doc-title">论文翻译助手</span>
+    <span class="ee-note" id="engine-note"></span>
+  </div>
+  <div class="ee-topbar-actions">
+    <button class="ee-btn" data-act="toggle-theme">明/暗</button>
+    <button class="ee-btn" id="btn-settings">设置</button>
+  </div>
+</header>
+
+<main class="ee-shell">
+
+  <div class="ee-hero">
+    <h1>上传论文，立刻获得左英右中对照阅读</h1>
+    <span class="sub">PDF / 图片 → 段落级对齐 → DeepSeek 逐段翻译 → 可选中任意句子追问</span>
+  </div>
+
+  <section class="ee-card">
+    <h2>1. 上传文档 <span class="muted">支持 .pdf / .png / .jpg（扫描件与图片需 OCR 支持）</span></h2>
+    <div class="ee-drop" id="drop">
+      <div class="big">把 PDF 拖到这里，或点击选择文件</div>
+      <div class="small">解析完成后会进入文档库，接着点「开始翻译」即可</div>
+      <input type="file" id="file" accept=".pdf,.png,.jpg,.jpeg,.webp,.bmp" hidden>
+    </div>
+    <div class="ee-form-row">
+      <label class="ee-field wide">标题（留空自动识别）
+        <input type="text" id="up-title" placeholder="例如：PLONK 论文">
+      </label>
+      <label class="ee-field">页码范围（可选）
+        <span style="display:flex;gap:6px;align-items:center">
+          <input type="number" id="up-from" min="1" placeholder="从" style="width:80px">
+          <span>—</span>
+          <input type="number" id="up-to" min="1" placeholder="到" style="width:80px">
+        </span>
+      </label>
+      <label class="ee-field inline" style="padding-bottom:8px">
+        <input type="checkbox" id="up-ocr" checked> 扫描页自动 OCR
+      </label>
+      <button class="ee-btn big" id="btn-pick">选择文件</button>
+    </div>
+    <div class="ee-callout" id="up-status" hidden></div>
+  </section>
+
+  <section class="ee-card">
+    <div class="ee-row-between">
+      <h2>2. 文档库<span class="muted" id="doc-count"></span></h2>
+      <button class="ee-btn" id="btn-refresh">刷新</button>
+    </div>
+    <div class="ee-doclist" id="doclist">
+      <div class="ee-help">还没有文档。先上传一个 PDF 试试。</div>
+    </div>
+  </section>
+
+  <section class="ee-card">
+    <h2>使用说明</h2>
+    <div class="ee-help">
+      <ol>
+        <li><b>配置 API</b>：右上角「设置」填入 DeepSeek API Key（也可写进项目根目录 <code>.env</code> 的 <code>DEEPSEEK_API_KEY</code>）。</li>
+        <li><b>上传</b>：拖入 PDF；论文很长时可只填页码范围，先逐章试跑。</li>
+        <li><b>翻译</b>：点文档卡片上的「开始翻译」，逐段进行；中途可以停，之后「继续翻译」接着跑。</li>
+        <li><b>阅读</b>：进入阅读页后左英右中逐段对齐；<b>选中任意句子</b>会浮出「问 AI」按钮；<code>j</code>/<code>k</code> 上下段，<code>[</code>/<code>]</code> 调字号。</li>
+        <li><b>带走</b>：「导出 HTML」得到可独立打开的双栏文件（公式用 MathJax 渲染，服务在跑时仍可问 AI）。</li>
+      </ol>
+      <p>公式保真说明：左栏原文由 PDF 内部字体与基线信息还原（CMMI/CMSY 等数学字体识别 + 上下标重建 + Unicode→LaTeX 映射），不依赖模型猜测；扫描件或矢量图形公式建议打开「公式修复」让模型参与重写。</p>
+    </div>
+  </section>
+</main>
+
+<!-- 开始使用：填一次 API Key（不需要注册账号）-->
+<div class="ee-modal-mask" id="welcome" hidden>
+  <div class="ee-modal" style="max-width:580px">
+    <h3>开始使用 EasyEssay</h3>
+    <div class="desc">
+      不用注册、不用登录。填一次你自己的 <b>DeepSeek API Key</b> 就能用；
+      密钥只保存在<b>这台电脑</b>的 <code>data/settings.json</code> 里，不会上传到任何地方。
+    </div>
+    <div class="grid">
+      <label class="ee-field full">DeepSeek API Key
+        <input type="password" id="w-key" placeholder="sk-..." autocomplete="off">
+      </label>
+      <label class="ee-field full">模型（可留默认）
+        <input type="text" id="w-model" placeholder="deepseek-chat">
+      </label>
+    </div>
+    <div class="ee-callout" id="w-status" hidden></div>
+    <div class="foot">
+      <a class="ee-btn" href="https://platform.deepseek.com/api_keys"
+         target="_blank" rel="noopener">还没有 Key？去申请</a>
+      <span style="flex:1"></span>
+      <button class="ee-btn" id="w-later">稍后设置</button>
+      <button class="ee-btn primary" id="w-save">保存并开始</button>
+    </div>
+  </div>
+</div>
+
+<!-- 设置 -->
+<div class="ee-modal-mask" id="settings" hidden>
+  <div class="ee-modal">
+    <h3>设置</h3>
+    <div class="desc">API Key 只保存在本机 <code>data/settings.json</code>，不会上传到任何第三方。</div>
+    <div class="grid">
+      <label class="ee-field full">DeepSeek API Key
+        <input type="password" id="s-key" placeholder="sk-...">
+      </label>
+      <label class="ee-field">Base URL（OpenAI 兼容）
+        <input type="text" id="s-base" placeholder="https://api.deepseek.com">
+      </label>
+      <label class="ee-field">翻译模型
+        <input type="text" id="s-model" placeholder="deepseek-chat">
+      </label>
+      <label class="ee-field">提问模型（留空同上）
+        <input type="text" id="s-askmodel" placeholder="deepseek-reasoner（可选）">
+      </label>
+      <label class="ee-field">目标语言
+        <input type="text" id="s-lang" placeholder="简体中文">
+      </label>
+      <label class="ee-field">温度
+        <input type="number" id="s-temp" step="0.1" min="0" max="2">
+      </label>
+      <label class="ee-field">每批段落数
+        <input type="number" id="s-batch" min="1" max="30">
+      </label>
+      <label class="ee-field">提问附带上下文段数
+        <input type="number" id="s-ctx" min="0" max="10">
+      </label>
+      <label class="ee-field inline" style="padding-top:18px">
+        <input type="checkbox" id="s-restore"> 左栏原文重建（公式还原为标准 LaTeX）
+      </label>
+      <label class="ee-field inline" style="padding-top:18px">
+        <input type="checkbox" id="s-fix"> 公式修复（翻译时顺带修正公式写法）
+      </label>
+      <label class="ee-field full">翻译系统提示词
+        <textarea id="s-prompt"></textarea>
+      </label>
+      <label class="ee-field full">提问系统提示词
+        <textarea id="s-askprompt"></textarea>
+      </label>
+    </div>
+    <div class="foot">
+      <button class="ee-btn" id="s-reset">恢复默认提示词</button>
+      <span style="flex:1"></span>
+      <button class="ee-btn" id="s-test">测试连接</button>
+      <button class="ee-btn" id="s-cancel">取消</button>
+      <button class="ee-btn primary" id="s-save">保存</button>
+    </div>
+  </div>
+</div>
+
+<div id="toast" class="ee-toast"></div>
+
+<script src="/static/js/md.js"></script>
+<script src="/static/js/api.js"></script>
+<script src="/static/js/app.js"></script>
+</body>
+</html>

@@ -1,0 +1,11 @@
+# EasyEssay —— 论文翻译助手 后端依赖
+# 安装：python -m pip install -r requirements.txt
+
+fastapi>=0.115
+uvicorn[standard]>=0.30
+python-multipart>=0.0.9
+httpx>=0.27
+PyMuPDF>=1.24          # PDF 文本/版面抽取（fitz）
+pdfplumber>=0.11       # PyMuPDF 抽取失败时的兜底
+pylatexenc>=2.10       # Unicode 数学符号 -> LaTeX 兜底映射
+python-dotenv>=1.0

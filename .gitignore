@@ -1,0 +1,59 @@
+# =============================================================================
+# 这个仓库会被人 clone / fork，**绝不能**把下面这些提交上去。
+# 加了这个文件之后，`git status` 就不会再列出它们。
+# =============================================================================
+
+# —— 运行时数据：论文原文、译文、账号哈希、密钥密文、初始化码、提问记录 ——
+# 这些是私人的，也是"站长也看不到"这套设计能成立的前提。
+data/
+!data/.gitkeep
+
+# 你的 DeepSeek API Key（环境变量文件）
+.env
+.env.*
+!.env.example
+
+# 生成的静态阅读库：里面是完整论文内容，按需自行部署，不随源码走
+site/
+
+# 示例论文 PDF（IACR ePrint 公开论文，版权归原作者，不随源码分发）
+samples/*.pdf
+# 例外：合成样张是自测输入，无版权问题，需要随仓库分发（全新 clone / CI 靠它跑测试）
+!samples/sample-paper.pdf
+
+# 导出物
+*.tmp.html
+
+# —— Python ——
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+env/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# —— 编辑器 / 系统 ——
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+*.swp
+*~
+
+# —— 构建/打包产物 ——
+dist/
+build/
+*.spec
+!packaging/*.spec
+node_modules/
+package-lock.json
+
+# —— 归档目录（账号体系已停用）——
+# 保留在本地备查，但不要跟着发布到 GitHub（历史包袱，且与当前产品形态不符）
+attic/
+
+# —— AI 助手的工作笔记（不属于应用本身，含本机路径等信息）——
+.workbuddy-ai/

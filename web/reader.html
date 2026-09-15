@@ -1,0 +1,69 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>EasyEssay · 对照阅读</title>
+<link rel="stylesheet" href="/static/css/reader.css">
+<link rel="stylesheet" href="/static/css/app.css">
+<script>
+window.MathJax = {
+  tex: {
+    inlineMath: [['$', '$'], ['\\(', '\\)']],
+    displayMath: [['$$', '$$'], ['\\[', '\\]']],
+    processEscapes: true,
+    tags: 'none'
+  },
+  svg: { fontCache: 'global' },
+  options: { skipHtmlTags: ['script', 'noscript', 'style', 'textarea', 'pre', 'code'] }
+};
+</script>
+<script src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-svg.js"
+        onerror="(function(){var s=document.createElement('script');s.src='/static/vendor/mathjax/tex-svg.js';document.head.appendChild(s);})()"></script>
+</head>
+<body data-api-base="">
+
+<header class="ee-topbar">
+  <div class="ee-topbar-left">
+    <a class="ee-logo" href="/" title="返回首页">EasyEssay</a>
+    <span class="ee-doc-title" id="doc-title">加载中…</span>
+    <span class="ee-note" id="doc-note"></span>
+  </div>
+  <div class="ee-topbar-actions">
+    <button class="ee-btn" data-act="view-all">对照</button>
+    <button class="ee-btn" data-act="view-en">仅原文</button>
+    <button class="ee-btn" data-act="view-zh">仅译文</button>
+    <button class="ee-btn" id="btn-toc">目录</button>
+    <button class="ee-btn" data-act="toggle-raw" title="在「重建原文」（公式已规范成 LaTeX）与「PDF 直抽原文」之间切换">原始抽取</button>
+    <button class="ee-btn" data-act="toggle-ref">参考文献</button>
+    <button class="ee-btn" data-act="font-minus">A-</button>
+    <button class="ee-btn" data-act="font-plus">A+</button>
+    <button class="ee-btn" data-act="toggle-font" title="在衬线（Times）与无衬线字体之间切换">字体</button>
+    <button class="ee-btn" data-act="toggle-theme">明/暗</button>
+    <button class="ee-btn primary" id="btn-translate">翻译</button>
+    <button class="ee-btn" id="btn-restore" title="只重建左栏公式（不重译，保留已有译文），花费远低于重新翻译">重建左栏</button>
+    <button class="ee-btn" id="btn-stop" hidden>停止</button>
+    <button class="ee-btn" id="btn-export">导出 HTML</button>
+    <a class="ee-btn" id="btn-source" target="_blank">原始 PDF</a>
+    <button class="ee-btn" data-act="print">打印</button>
+    <button class="ee-btn" data-act="toggle-ask">问 AI</button>
+  </div>
+</header>
+
+<div class="ee-progress"><div class="ee-progress-bar" id="progress-bar"></div></div>
+
+<main id="reader">
+  <div class="ee-loading"><span class="ee-spinner"></span><span>正在加载文档…</span></div>
+</main>
+
+<aside class="ee-toc" id="toc" hidden></aside>
+<aside class="ee-ask" id="ask" hidden></aside>
+<div id="toast" class="ee-toast"></div>
+
+<script src="/static/js/md.js"></script>
+<script src="/static/js/api.js"></script>
+<script src="/static/js/bilingual.js"></script>
+<script src="/static/js/askpanel.js"></script>
+<script src="/static/js/reader.js"></script>
+</body>
+</html>

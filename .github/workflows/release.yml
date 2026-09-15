@@ -1,0 +1,79 @@
+# 打 tag 就自动构建各平台可执行文件并挂到 GitHub Release。
+#   git tag v1.0.0 && git push origin v1.0.0
+# 之后在 Releases 页面就能看到 EasyEssay-windows-x86_64.zip 等产物。
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch: {}     # 也可以手动触发，仅产出构建物
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: 打包 ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            artifact: EasyEssay-windows-x86_64
+          - os: macos-latest
+            artifact: EasyEssay-macos-arm64
+          - os: ubuntu-latest
+            artifact: EasyEssay-linux-x86_64
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: 安装依赖
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt -r requirements-build.txt
+
+      - name: 自测（接口层 + 翻译流水线，不需要 API Key）
+        run: |
+          python scripts/http_test.py
+          python scripts/pipeline_test.py --pages 1-2
+
+      - name: 前端冒烟（jsdom，检查首页"填 Key 即用"流程）
+        run: |
+          npm install --no-save jsdom
+          node scripts/ui_smoke.js
+
+      - name: 打包
+        run: python packaging/build.py --zip
+
+      - name: 重命名产物
+        shell: bash
+        run: |
+          cd dist
+          for f in *.zip; do mv "$f" "${{ matrix.artifact }}.zip"; done
+          ls -la
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact }}
+          path: dist/${{ matrix.artifact }}.zip
+
+      - name: 附加到 Release
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/${{ matrix.artifact }}.zip
+          generate_release_notes: true
+          body: |
+            ## 下载即用
+
+            1. 下载对应平台的 zip 并解压到一个可写目录
+            2. 双击 `EasyEssay`（Windows 为 `EasyEssay.exe`）
+            3. 浏览器会自动打开，第一次填你自己的 DeepSeek API Key 即可
+
+            详细说明见压缩包里的 `README-使用说明.txt`。

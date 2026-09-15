@@ -1,0 +1,171 @@
+#!/usr/bin/env python
+"""把 EasyEssay 打包成"下载就能双击用"的可执行文件。
+
+用法（先装 PyInstaller）：
+    pip install -r requirements-build.txt
+    python packaging/build.py              # 打包当前平台
+    python packaging/build.py --zip        # 顺便打成 zip，便于上传到 GitHub Release
+
+产出：
+    dist/EasyEssay(.exe)                  单文件可执行程序
+    dist/EasyEssay-<平台>.zip              压缩包（含说明）
+    dist/README-使用说明.txt
+
+打包要点（踩过的坑都写在注释里）：
+  * web/ 是运行时需要的静态资源，必须 --add-data 打进去；
+    app/config.py 在 frozen 模式下会从 sys._MEIPASS 找它。
+  * 数据目录（data/）会放在可执行文件**同级目录**，不是临时解包目录，
+    否则用户一退出就丢文档。config.py 同样做了这个判断。
+  * uvicorn 的动态导入（事件循环 / 协议实现）PyInstaller 静态分析不到，
+    必须显式 --hidden-import，否则启动时报 "no module named uvicorn.loops.auto"。
+  * uvicorn 的导入字符串 "app.main:app" 在打包后不可靠 → app/main.py 里
+    frozen 模式改成直接把 app 对象传给 uvicorn.run()。
+"""
+from __future__ import annotations
+
+import argparse
+import platform
+import shutil
+import subprocess
+import sys
+import zipfile
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parents[1]
+DIST = ROOT / "dist"
+NAME = "EasyEssay"
+
+HIDDEN_IMPORTS = [
+    "uvicorn.logging",
+    "uvicorn.loops",
+    "uvicorn.loops.auto",
+    "uvicorn.loops.asyncio",
+    "uvicorn.protocols",
+    "uvicorn.protocols.http",
+    "uvicorn.protocols.http.auto",
+    "uvicorn.protocols.http.h11_impl",
+    "uvicorn.protocols.websockets",
+    "uvicorn.protocols.websockets.auto",
+    "uvicorn.lifespan",
+    "uvicorn.lifespan.on",
+    "uvicorn.lifespan.off",
+    "app.main",
+    "app.cli",
+]
+
+README_TXT = """EasyEssay · 论文翻译助手
+================================
+
+怎么用（三步）
+--------------
+1. 把本目录整个解压到一个**可写**的位置（例如 D:\\\\EasyEssay），不要放在压缩包里直接运行。
+2. 双击 EasyEssay（Windows 下是 EasyEssay.exe）。首次运行 Windows 防火墙可能弹窗，选“允许访问”
+   （只是让本机页面能连上本地服务，不允许也不影响本机使用）。
+3. 浏览器会自动打开 http://127.0.0.1:8765 —— 第一次会让你填自己的 DeepSeek API Key
+   （只保存在本机 data/settings.json，不会上传到任何地方）。
+
+之后就能：上传 PDF → 自动逐段翻译 → 左右对照阅读 → 选中任意句子追问。
+顶栏「导出 HTML」可得到可独立打开、可分享的对照阅读页。
+
+需要什么
+--------
+* Windows 10/11、macOS 12+ 或 Linux（x86_64）
+* 一个 DeepSeek API Key（https://platform.deepseek.com/api_keys）
+* 扫描件需要 OCR，可用 pip 装 requirements-ocr.txt 后改用源码方式运行
+
+数据在哪
+--------
+程序同级目录的 data/ ：
+  data/settings.json        你的设置与 API Key
+  data/docs/<文档>/          原文、抽取结果、译文、问答记录
+删掉 data/ 就等于恢复出厂设置；换电脑时把这个目录一起拷走即可。
+
+常见问题
+--------
+* 双击没反应 / 窗口一闪而过：在终端里运行 （Windows: 在地址栏输 cmd 回车，然后输 EasyEssay.exe）
+  可以看到具体报错。
+* 端口被占用：程序会自动换一个端口，以浏览器实际打开的地址为准；也可 --port 9000 指定。
+* 想给同一局域网的别人用：命令行加 --open（注意：这个模式没有密码保护，只在可信网络使用）。
+* 想完全离线/自建模型：设置里把 Base URL 换成 https://api.siliconflow.cn/v1 或本地 Ollama 的
+  http://127.0.0.1:11434/v1 即可。
+
+本程序按 MIT 协议开源，论文版权归原作者所有。
+"""
+
+
+def main() -> int:
+    ap = argparse.ArgumentParser(description="打包 EasyEssay 可执行文件")
+    ap.add_argument("--zip", action="store_true", help="顺便打成 zip")
+    ap.add_argument("--onedir", action="store_true",
+                    help="打包成目录而不是单文件（启动更快，但文件多）")
+    ap.add_argument("--console", action="store_true",
+                    help="保留控制台窗口（排错用；默认 Windows 下隐藏控制台）")
+    args = ap.parse_args()
+
+    try:
+        import PyInstaller  # noqa: F401
+    except ImportError:
+        print("缺少 PyInstaller，请先执行： pip install -r requirements-build.txt")
+        return 2
+
+    dist = DIST
+    if dist.exists():
+        shutil.rmtree(dist, ignore_errors=True)
+
+    # 图标：没有就现场生成（用代码画，不依赖外部素材）
+    icon = Path(__file__).resolve().parent / ("icon.ico" if platform.system() == "Windows"
+                                             else "icon.png")
+    if not icon.exists():
+        subprocess.run([sys.executable, str(Path(__file__).resolve().parent / "make_icon.py")],
+                       cwd=str(ROOT))
+
+    sep = ";" if platform.system() == "Windows" else ":"
+    cmd = [
+        sys.executable, "-m", "PyInstaller",
+        "--noconfirm", "--clean",
+        "--name", NAME,
+        "--paths", str(ROOT),
+        "--add-data", f"{ROOT / 'web'}{sep}web",
+    ]
+    if icon.exists():
+        cmd += ["--icon", str(icon)]
+    if not args.onedir:
+        cmd.append("--onefile")
+    if platform.system() == "Windows" and not args.console:
+        cmd.append("--noconsole")
+    for mod in HIDDEN_IMPORTS:
+        cmd += ["--hidden-import", mod]
+    # 这些是重量级可选依赖，装了就带上，没装也不影响主流程
+    for mod in ("pymupdf", "pdfplumber", "pylatexenc", "dotenv", "PIL", "rapidocr_onnxruntime"):
+        cmd += ["--hidden-import", mod]
+    cmd.append(str(ROOT / "easyessay.py"))
+
+    print("执行：", " ".join(cmd[:6]), "…")
+    result = subprocess.run(cmd, cwd=str(ROOT))
+    if result.returncode != 0:
+        print("\n打包失败。常见原因：见本脚本顶部注释。")
+        return result.returncode
+
+    # 把使用说明放到产物旁边
+    (dist / "README-使用说明.txt").write_text(README_TXT, encoding="utf-8")
+
+    binary = dist / (NAME + (".exe" if platform.system() == "Windows" else ""))
+    print(f"\n✅ 打包完成：{binary}")
+
+    if args.zip:
+        tag = f"{platform.system().lower()}-{platform.machine().lower()}"
+        zip_path = dist / f"{NAME}-{tag}.zip"
+        with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as z:
+            if binary.exists():
+                z.write(binary, binary.name)
+            z.write(dist / "README-使用说明.txt", "README-使用说明.txt")
+            samples = ROOT / "samples" / "demo-plonk" / "PLONK-论文前两页-中英对照示例.html"
+            if samples.exists():
+                z.write(samples, "效果示例-中英对照.html")
+        print(f"✅ 已压缩：{zip_path}")
+        print("   把这个 zip 上传到 GitHub Releases（或直接发给朋友）即可。")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

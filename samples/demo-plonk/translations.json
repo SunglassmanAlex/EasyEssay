@@ -1,0 +1,199 @@
+{
+  "p0001": {
+    "zh": "PlonK：基于拉格朗日基置换的通用非交互知识论证",
+    "terms": []
+  },
+  "p0002": {
+    "zh": "Ariel Gabizon$^{*}$　Zachary J. Williamson　Oana Ciobotaru　（所属机构：Aztec、Aztec、Pi Squared）",
+    "terms": [],
+    "en": "Ariel Gabizon$^{*}$　Zachary J. Williamson　Oana Ciobotaru　—　Aztec · Aztec · Pi Squared"
+  },
+  "p0003": {
+    "zh": "2025 年 7 月 17 日",
+    "terms": []
+  },
+  "p0004": {
+    "zh": "利用可更新通用结构化参考串（structured reference string, SRS）的 zk-SNARK 方案，消除了部署 zk-SNARK 的主要障碍之一 [GKM$^{+}$]。Maller 等人的重要工作 [MBKM] 给出了 Sonic —— 首个在具有此类 SRS 的通用算术电路上、具备完全简洁（fully succinct）验证且具备实用潜力的 zk-SNARK。然而，那个能够实现完全简洁验证的 Sonic 版本，其证明构造开销仍然相对偏高。本文给出一种通用 SNARK 构造，具备完全简洁验证，且证明者运行时间显著降低（在完全简洁验证模式下，依据电路结构不同，群指数运算次数约为 [MBKM] 的 1/7.5 至 1/20）。",
+    "terms": [
+      {
+        "en": "structured reference string, SRS",
+        "zh": "结构化参考串"
+      },
+      {
+        "en": "zk-SNARK",
+        "zh": "零知识简洁非交互式知识论证"
+      },
+      {
+        "en": "fully succinct",
+        "zh": "完全简洁"
+      }
+    ],
+    "en": "Abstract. zk-SNARK constructions that utilize an updatable universal structured reference string remove one of the main obstacles in deploying zk-SNARKs [GKM$^{+}$]. The important work of Maller et al. [MBKM] presented Sonic — the first potentially practical zk-SNARK with fully succinct verification for general arithmetic circuits with such an SRS. However, the version of Sonic enabling fully succinct verification still requires relatively high proof construction overheads. We present a universal SNARK construction with fully succinct verification, and significantly lower prover running time (roughly $7.5$–$20$ times fewer group exponentiations than [MBKM] in the fully succinct verifier mode, depending on circuit structure)."
+  },
+  "p0005": {
+    "zh": "与 [MBKM] 类似，我们依赖基于 Bayer 和 Groth [BG12] 的置换论证（permutation argument）。不同之处在于，我们关注的是「在子群上取值的求值形式，而非单项式系数」；这使得置换论证与算术化（arithmetization）步骤都能得到简化。",
+    "terms": [
+      {
+        "en": "permutation argument",
+        "zh": "置换论证"
+      },
+      {
+        "en": "arithmetization",
+        "zh": "算术化"
+      }
+    ]
+  },
+  "p0006": {
+    "zh": "1　引言",
+    "terms": []
+  },
+  "p0007": {
+    "zh": "由于 zk-SNARK 已在真实场景中部署，如何让结构化参考串（SRS）以「通用且可更新」的方式构造出来，已成为一个备受关注的问题。其含义是：同一个 SRS 可用于关于某个有界规模内所有电路的陈述；并且在任意时刻，SRS 都可以被新的参与方更新，只要截至该时刻的全部更新者中有一个是诚实的，可靠性（soundness）即可成立。为简洁起见，我们把具有这种设置过程的 zk-SNARK 称为通用的。",
+    "terms": [
+      {
+        "en": "soundness",
+        "zh": "可靠性"
+      },
+      {
+        "en": "universal",
+        "zh": "通用的"
+      }
+    ]
+  },
+  "p0008": {
+    "zh": "为便于本引言的叙述，我们称一个用于电路可满足性（circuit satisfiability）的 zk-SNARK 是完全简洁的，如果：",
+    "terms": [
+      {
+        "en": "circuit satisfiability",
+        "zh": "电路可满足性"
+      }
+    ]
+  },
+  "p0009": {
+    "zh": "$^{*}$ 本工作的大部分内容是在第一作者任职于 Protocol Labs 期间完成的。",
+    "terms": [],
+    "en": "$^{*}$ Most of this work was done while the first author was working at Protocol Labs."
+  },
+  "p0010": {
+    "zh": "1. 预处理$^{1}$阶段／SRS 生成的运行时间在电路规模上是准线性的。",
+    "terms": [
+      {
+        "en": "quasilinear",
+        "zh": "准线性的"
+      }
+    ],
+    "en": "1. The preprocessing$^{1}$ phase / SRS generation run time is quasilinear in circuit size."
+  },
+  "p0011": {
+    "zh": "2. 证明者（prover）的运行时间在电路规模上是准线性的。",
+    "terms": [
+      {
+        "en": "prover",
+        "zh": "证明者"
+      }
+    ]
+  },
+  "p0012": {
+    "zh": "3. 证明长度在电路规模上是对数级的。$^{2}$",
+    "terms": [],
+    "en": "3. The proof length$^{2}$ is logarithmic in circuit size."
+  },
+  "p0013": {
+    "zh": "4. 验证者$^{3}$的运行时间在电路规模上是多对数级的。",
+    "terms": [
+      {
+        "en": "verifier",
+        "zh": "验证者"
+      }
+    ],
+    "en": "4. The verifier$^{3}$ run time is polylogarithmic in circuit size."
+  },
+  "p0014": {
+    "zh": "Maller 等人 [MBKM] 首次构造出用于电路可满足性的通用完全简洁 zk-SNARK，称为 Sonic。",
+    "terms": [],
+    "en": "Maller et al. [MBKM] constructed for the first time a universal fully succinct zk-SNARK for circuit satisfiability, called Sonic."
+  },
+  "p0015": {
+    "zh": "[MBKM] 还给出了 Sonic 的一个版本，其证明者运行时间得到极大改善，代价是只能在某种摊还（amortized）意义下实现高效验证。",
+    "terms": [
+      {
+        "en": "amortized",
+        "zh": "摊还的"
+      }
+    ]
+  },
+  "p0016": {
+    "zh": "1.1　我们的结果",
+    "terms": []
+  },
+  "p0017": {
+    "zh": "本文给出一个通用完全简洁的 zk-SNARK，与完全简洁的 Sonic 相比，其证明者运行时间显著改善。",
+    "terms": []
+  },
+  "p0018": {
+    "zh": "从宏观上看，我们的改进源自对电路更为直接的算术化，而不是 [MBKM] 那种受 [BCC$^{+}$16] 启发的算术化。与之相结合的是：置换论证建立在乘法子群上的一元求值之上，而不是像 [MBKM] 那样建立在二元多项式的系数之上。",
+    "terms": [
+      {
+        "en": "multiplicative subgroup",
+        "zh": "乘法子群"
+      }
+    ],
+    "en": "At a high level our improvements stem from a more direct arithmetization of a circuit as compared to the [BCC$^{+}$16]-inspired arithmetization of [MBKM]. This is combined with a permutation argument over univariate evaluations on a multiplicative subgroup rather than over coefficients of a bivariate polynomial as in [MBKM]."
+  },
+  "p0019": {
+    "zh": "简而言之，乘法子群之所以有用，原因之一是包括 Sonic 在内的若干协议都使用了基于 Bayer 和 Groth [BG12] 的置换论证。归根结底，在「大乘积论证」中，这被归约为检查「相邻单项式」处各多项式系数之间的关系。",
+    "terms": [
+      {
+        "en": "grand product argument",
+        "zh": "大乘积论证"
+      },
+      {
+        "en": "monomial",
+        "zh": "单项式"
+      }
+    ],
+    "en": "In a nutshell, one reason multiplicative subgroups are useful is that several protocols, including Sonic, use a permutation argument based on Bayer and Groth [BG12]. Ultimately, in the “grand product argument”, this reduces to checking relations between coefficients of polynomials at “neighbouring monomials”."
+  },
+  "p0020": {
+    "zh": "我们注意到，如果把点 $x$ 与 $g \\cdot x$ 视为相邻的点对（其中 $g$ 是域 $F$ 的某个乘法子群的生成元），那么在这样的点对上检查不同多项式之间的关系将非常方便。",
+    "terms": [
+      {
+        "en": "generator",
+        "zh": "生成元"
+      }
+    ],
+    "en": "We observe that if we think of the points $x$, $g \\cdot x$ as neighbours, where $g$ is a generator of a multiplicative subgroup of a field $F$, it is very convenient to check relations between different polynomials at such pairs of points."
+  },
+  "p0021": {
+    "zh": "另一个相关的便利之处是，乘法子群与拉格朗日基（Lagrange basis）配合得很好。例如，设 $H \\subset F$ 是阶为 $n$ 的乘法子群，且 $x \\in H$。那么满足「在 $H \\backslash \\{x\\}$ 上取值为零」且 $L_x(x) = 1$ 的 $n-1$ 次多项式 $L_x$，具有形式非常稀疏的表示：\n\n$$L_x(X) = c_x \\cdot \\frac{X^{n} - 1}{X - x}$$\n\n其中 $c_x$ 为常数。在依据多项式恒等式构造可高效验证的 [BG12] 型置换论证时，这一点非常有利。",
+    "terms": [
+      {
+        "en": "Lagrange basis",
+        "zh": "拉格朗日基"
+      },
+      {
+        "en": "polynomial identity",
+        "zh": "多项式恒等式"
+      }
+    ],
+    "en": "A related convenience is that multiplicative subgroups interact well with Lagrange bases. For example, suppose $H \\subset F$ is a multiplicative subgroup of order $n$, and $x \\in H$. The polynomial $L_x$ of degree $n-1$ that vanishes on $H \\backslash \\{x\\}$ and has $L_x(x) = 1$ has a very sparse representation of the form\n\n$$L_x(X) = c_x \\cdot \\frac{X^{n} - 1}{X - x}$$\n\nfor a constant $c_x$. This is beneficial when constructing an efficiently verifiable [BG12]-style permutation argument in terms of polynomial identities."
+  },
+  "p0022": {
+    "zh": "1　本文使用「SNARK」一词指代有时被称为「带预处理的 SNARK」的对象（参见 [GGPR13] 等），其中允许一次性验证者计算，其复杂度在电路规模上是多项式级而非多对数级。作为交换，该 SNARK 被期望适用于所有非一致（non-uniform）电路，而不仅仅是关于一致计算的陈述。",
+    "terms": [
+      {
+        "en": "non-uniform circuit",
+        "zh": "非一致电路"
+      }
+    ],
+    "en": "1 We use the term SNARK in this paper for what is sometimes called a “SNARK with preprocessing” (see e.g. [GGPR13]) where one allows a one-time verifier computation that is polynomial rather than polylogarithmic in the circuit size. In return, the SNARK is expected to work for all non-uniform circuits, rather than only statements about uniform computation."
+  },
+  "p0023": {
+    "zh": "2　从理论角度看，多对数的证明长度更为自然；但对数长度很好地刻画了近期那些使用常数个群元素的构造，有时也是「实用性壁垒」的良好指标。",
+    "terms": []
+  },
+  "p0024": {
+    "zh": "3　在许多定义中，只要求证明长度是多对数的。例如在 [GGPR13] 的术语体系下，若额外要求验证者运行时间为多对数，则该 SNARK 被称为 unsubtle（非精妙的）。",
+    "terms": []
+  }
+}
