@@ -152,6 +152,8 @@
   // （真实浏览器自检当场抓到；jsdom 那次也栽在同类的 IIFE 作用域上）。
   // 每次渲染开始时重置（见 renderBilingual 里的赋值）。
   var seenTerms = { en: {}, zh: {} };
+  // 上一行的结束页：用来插分页标记行（渲染开始时重置）
+  var prevPage = 0;
 
   function highlightTerms(root, terms, lang) {
     if (!terms || !terms.length) return;
@@ -377,7 +379,7 @@
    * 图是纯图形时显示模型写的译注（〔译注：原文此处为一幅…〕）——
    * 这样读者知道"这里原本有一张图、它是关于什么的"，而不是一片空白。
    */
-  function fillFigureCell(cell, fig) {
+  function fillFigureCell(cell, fig, para0_note) {
     if (!fig || !fig.caption) return false;
     var box = el('div', 'figbox');
     (fig.content || []).forEach(function (line) {
@@ -391,9 +393,11 @@
       lab.textContent = fig.labels.join(' · ');
       box.appendChild(lab);
     }
-    if (fig.note) {
+    // 译注：本侧没有就用另一侧带过来的（参照稿左右各一份）
+    var noteText = fig.note || para0_note;
+    if (noteText) {
       var note = el('div', 'note');
-      note.textContent = fig.note;
+      note.textContent = noteText;
       box.appendChild(note);
     }
     var cap = el('div', 'figcap');
@@ -414,8 +418,12 @@
   function fillCell(cell, para, kind) {
     var text = para.text || '';
     if (kind === 'figure') {
+      // ⚠️ 顺序要紧：**协议框优先**。安全游戏那种"图"其实是规则条目，
+      // 参照稿把它渲染成 `.proto` + 编号步骤；而图框分支一旦先 return，
+      // 协议分支就永远走不到（实测导出里 `.proto` 一直是 0）。
+      if (para.protocol && fillProtocolCell(cell, para.protocol)) return;
       var fig = para.figure;
-      if (fig && fig.caption && fillFigureCell(cell, fig)) return;
+      if (fig && fig.caption && fillFigureCell(cell, fig, para.figureNote)) return;
     }
     if (kind === 'table' && para.table) {
       tableCaption(cell, para.caption);
@@ -425,7 +433,6 @@
       var lines = (para.algorithm && para.algorithm.lines) || String(text).split('\n');
       if (fillAlgorithmCell(cell, lines, para.protocol)) return;
     }
-    if (kind === 'figure' && para.protocol && fillProtocolCell(cell, para.protocol)) return;
     if (kind === 'equation') { fillEquationCell(cell, text); return; }
     md.richInto(cell, text);
   }
@@ -479,6 +486,7 @@
     };
     // 每次渲染重置"术语已标过"的集合 → 每个术语全篇只标首次出现
     seenTerms = { en: {}, zh: {} };
+    prevPage = 0;
 
     // 术语表的取得：优先用**全局术语表**（规格 §7 说它是唯一真源）；
     // 老文档没有 glossary 时，从各段 terms 去重兜底。
@@ -526,6 +534,21 @@
       var from = p.page || 1;
       var to = p.page_end || from;
 
+      // 页与页之间插一条**左右两栏都有**的分页标记行。
+      // 参照稿 `.row.pbreak` 就是这么写的 —— 关键点是**两栏都占位**：
+      // 只在一侧标记会让中英分界线在那一行断掉（规格 §8 的原话）。
+      if (prevPage && from > prevPage) {
+        var pb = el('div', 'row pbreak');
+        pb.dataset.pg = prevPage + '→' + from;
+        var pbEn = el('div', 'en');
+        pbEn.textContent = '— page ' + prevPage + ' ends · page ' + from + ' begins —';
+        var pbZh = el('div', 'zh');
+        pbZh.textContent = '—— 原文第 ' + prevPage + ' 页结束 · 第 ' + from + ' 页开始 ——';
+        pb.appendChild(pbEn);
+        pb.appendChild(pbZh);
+        wrap.appendChild(pb);      // 容器变量叫 wrap（写成 container 会 ReferenceError）
+      }
+      prevPage = to;
 
       var tr = translations[p.id] || {};
       var kind = p.kind || 'text';
@@ -553,7 +576,10 @@
       if (rebuilt) {
         fillCell(en, { kind: kind, text: state.showRaw ? p.text : tr.en, table: p.table,
                     caption: p.caption,
-                    figure: tr.en_figure || p.figure, protocol: tr.protocol,
+                    figure: tr.en_figure || p.figure,
+                    // 译注在两侧都显示（参照稿的排法）——译文侧带的 note 借给英文侧
+                    figureNote: (tr.figure || {}).note || '',
+                    protocol: tr.protocol,
                     algorithm: (state.showRaw ? p.algorithm : (tr.en_algorithm || p.algorithm)) }, kind);
         en.dataset.rebuilt = '1';
         en.title = '左栏为「重建原文」（公式已还原为标准 LaTeX）。点顶栏「原始抽取」可切回 PDF 直抽的原始文本。';

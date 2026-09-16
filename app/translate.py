@@ -29,15 +29,19 @@ OUTPUT_SPEC = r"""
   按上下文还原成最可能的 LaTeX，**绝不在 zh 里保留 `⟦?⟧`**；
 - 若该段是纯公式（$$...$$），en 与 zh 都原样返回该公式，不要添加解释；
 - terms 只列该段的关键术语（最多 4 个，en/zh 对应），没有则给空数组 []；
-- **kind 为 `figure` 的段落是图**：输入给的是 `figure.caption`（图题）与
-  `figure.content`（图内文字，可能为空数组）。返回 `"figure": {"caption": "图题译文", "content": [...], "note": "..."}`；
+- **kind 为 `figure` 的段落是图**：输入给的是 `figure.caption`（图题）、
+  `figure.content`（图内文字，可能为空数组）与 `figure.labels`（图上标签：坐标轴刻度、
+  图例、子图标题 —— 这些**不翻译**，但你要看它们来写译注）。
+  返回 `"figure": {"caption": "图题译文", "content": [...], "note": "..."}`；
   **`caption` 必须有**（`Figure 1:` 译成 `图 1：`）；
-  `content` 是图里的文字（图例、示意文字、示意框图），逐条翻译，允许重新断行；
-  **图里没有可读文字时（`content` 为空）必须写 `note`** —— 用一条译注说明
-  “这里原本是一幅什么图、说明了什么”，形如
-  `〔译注：原文此处为一幅 HNSW 多层图示意，含图例六项：已访问节点、…〕`。
-  依据只能是图题与上下文，**不要编造图里没有的数字或结论**；
-  图内文字非空时 `note` 给空字符串。
+  `content` 是图里**成句的文字**（示意框里的词、检索结果文本），逐条翻译，允许重新断行；
+  **`note` 每一幅图都必须写**（硬要求，不是可选项）—— 一条译注告诉读者
+  "原文这里是什么图、表达了什么"，例如：
+  · 示意图：`〔译注：原文此处为四幅并排的遍历过程示意（a–d），图中节点编号 1–7 表示迭代轮次。此处保留图题与图例。〕`
+  · 柱状图：`〔译注：原文此处为柱状图，上述数值为图中各柱的标注值，按原文顺序照录；具体对应关系以原图为准。〕`
+  · 曲线图：`〔译注：原文此处为按数据集分面的四条 MRR@10–延迟曲线，无数值表格。此处保留图题与图例。〕`
+  依据只能是**图题、图内文字、标签与上下文**，**不要编造图里没有的数字或结论**；
+  并说明对读者有用的事实：图题与图例是否已保留、数值是不是图中标注值。
 - **kind 为 `algorithm` 的段落是伪代码，按行处理**：输入给的是 `algorithm.lines`
   （一行的列表，已保留行号与缩进）。返回 `"algorithm": {"lines": [译文行, ...]}`，
   **行数与输入完全一致**，也不要返回 en/zh 字段。
@@ -93,15 +97,19 @@ OUTPUT_SPEC_NO_RESTORE = r"""
   按上下文还原成最可能的 LaTeX，**绝不在 zh 里保留 `⟦?⟧`**；
 - 若该段是纯公式（$$...$$），zh 原样返回该公式，不要添加解释；
 - terms 只列该段的关键术语（最多 4 个，en/zh 对应），没有则给空数组 []；
-- **kind 为 `figure` 的段落是图**：输入给的是 `figure.caption`（图题）与
-  `figure.content`（图内文字，可能为空数组）。返回 `"figure": {"caption": "图题译文", "content": [...], "note": "..."}`；
+- **kind 为 `figure` 的段落是图**：输入给的是 `figure.caption`（图题）、
+  `figure.content`（图内文字，可能为空数组）与 `figure.labels`（图上标签：坐标轴刻度、
+  图例、子图标题 —— 这些**不翻译**，但你要看它们来写译注）。
+  返回 `"figure": {"caption": "图题译文", "content": [...], "note": "..."}`；
   **`caption` 必须有**（`Figure 1:` 译成 `图 1：`）；
-  `content` 是图里的文字（图例、示意文字、示意框图），逐条翻译，允许重新断行；
-  **图里没有可读文字时（`content` 为空）必须写 `note`** —— 用一条译注说明
-  “这里原本是一幅什么图、说明了什么”，形如
-  `〔译注：原文此处为一幅 HNSW 多层图示意，含图例六项：已访问节点、…〕`。
-  依据只能是图题与上下文，**不要编造图里没有的数字或结论**；
-  图内文字非空时 `note` 给空字符串。
+  `content` 是图里**成句的文字**（示意框里的词、检索结果文本），逐条翻译，允许重新断行；
+  **`note` 每一幅图都必须写**（硬要求，不是可选项）—— 一条译注告诉读者
+  "原文这里是什么图、表达了什么"，例如：
+  · 示意图：`〔译注：原文此处为四幅并排的遍历过程示意（a–d），图中节点编号 1–7 表示迭代轮次。此处保留图题与图例。〕`
+  · 柱状图：`〔译注：原文此处为柱状图，上述数值为图中各柱的标注值，按原文顺序照录；具体对应关系以原图为准。〕`
+  · 曲线图：`〔译注：原文此处为按数据集分面的四条 MRR@10–延迟曲线，无数值表格。此处保留图题与图例。〕`
+  依据只能是**图题、图内文字、标签与上下文**，**不要编造图里没有的数字或结论**；
+  并说明对读者有用的事实：图题与图例是否已保留、数值是不是图中标注值。
 - **kind 为 `algorithm` 的段落是伪代码，按行处理**：输入给的是 `algorithm.lines`
   （一行的列表，已保留行号与缩进）。返回 `"algorithm": {"lines": [译文行, ...]}`，
   **行数与输入完全一致**，也不要返回 en/zh 字段。
@@ -203,7 +211,10 @@ def apply_table_rows(grid: dict, translated: Any) -> dict | None:
 def figure_for_prompt(fig: dict) -> dict:
     """图给模型的形状：图题 + 图内文字（可能是空的）+ 上下文（用于写译注）。"""
     return {"caption": fig.get("caption", ""),
-            "content": [str(x) for x in (fig.get("content") or [])]}
+            "content": [str(x) for x in (fig.get("content") or [])],
+            # 标签（坐标轴刻度、图例）不翻译，但**必须给模型看** ——
+            # 它要靠这些写"原文此处是什么图、数值是不是图中标注值"（参照稿就是这么写的）
+            "labels": [str(x) for x in (fig.get("labels") or [])]}
 
 
 def apply_figure(fig: dict, translated: Any) -> dict | None:
@@ -220,9 +231,13 @@ def apply_figure(fig: dict, translated: Any) -> dict | None:
     content = translated.get("content")
     if not isinstance(content, list):
         content = [str(x) for x in (fig.get("content") or [])]
+    note = str(translated.get("note") or "").strip()
+    if not note:
+        # 译注是硬要求（参照稿每幅图都有）：没有就判失败，让这一轮重试
+        return None
     return {"caption": caption,
             "content": [str(x).strip() for x in content if str(x).strip()],
-            "note": str(translated.get("note") or "").strip()}
+            "note": note}
 
 
 def algorithm_for_prompt(alg: dict) -> dict:
@@ -825,6 +840,9 @@ def _is_stale(para: dict, rec: dict) -> bool:
         zh = (rec.get("figure") or {}).get("content") or []
         # 源图里本来没文字、译文却凭空有 / 反之，都说明是旧结构
         if bool(zh) != bool(en):
+            return True
+        # 缺译注也算失效：译注是硬要求，缺了要补（参照稿每幅图都有一条）
+        if not (rec.get("figure") or {}).get("note"):
             return True
         return False
     return False

@@ -65,9 +65,12 @@
         el.appendChild(node('pre', null, esc(fence[2])));
         return;
       }
-      // 独立公式
+      // 独立公式：进 `.eq` 框（参照稿里**每个独立公式都有一个框**）。
+      // 原来只标了个没有样式的 `md-display` —— 于是正文里的公式是裸的，
+      // 而只有 `kind=equation` 的段才有框，观感就比参照稿差一截。
+      // 两个类都留着：`eq` 负责样式，`md-display` 供既有查询/测试识别。
       if (BLOCK_MATH_RE.test(t)) {
-        el.appendChild(node('div', 'md-display', esc(t)));
+        el.appendChild(node('div', 'eq md-display', esc(t)));
         return;
       }
       // 标题

@@ -108,6 +108,44 @@ a:hover { text-decoration: underline; }
 
 .ee-topbar-left { display: flex; align-items: center; gap: 10px; min-width: 0; flex: 1 1 auto; }
 
+/* —— 导出物的文档式头部 ——
+   导出是"一份文档"，不是"一个应用界面"：只留标题 + 说明，
+   观感上贴近参照稿（它也是标题 + 一行说明，没有应用栏）。 */
+.ee-doc-head {
+  max-width: var(--reader-max);
+  margin: 26px auto 6px;
+  padding: 0 var(--gut) 0 var(--gut);
+}
+.ee-doc-h1 {
+  font-size: 21px;
+  line-height: 1.35;
+  margin: 0;
+  color: var(--fg);
+  font-weight: 700;
+}
+.ee-doc-meta { margin-top: 5px; font-size: var(--fs-block-sm); color: var(--muted); }
+
+/* 控制按钮：右下角悬浮（默认半透明，鼠标移上去才明显）
+   —— 既是"文档"（不挡阅读），又保留调字号/主题的能力 */
+.ee-floatbar {
+  position: fixed;
+  right: 16px;
+  bottom: 16px;
+  top: auto;
+  z-index: 40;
+  display: block;
+  padding: 6px 8px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--bg) 88%, transparent);
+  backdrop-filter: saturate(1.4) blur(10px);
+  box-shadow: var(--shadow);
+  opacity: .55;
+  transition: opacity .15s ease;
+}
+.ee-floatbar:hover, .ee-floatbar:focus-within { opacity: 1; }
+.ee-floatbar .ee-topbar-actions { flex-wrap: wrap; max-width: 420px; justify-content: flex-end; }
+
 .ee-logo {
   font-weight: 700;
   font-size: 17px;
@@ -434,6 +472,23 @@ blockquote {
   padding-left: 10px;
   margin: 8px 0;
 }
+/* 页与页之间的分页标记行（左右两栏都有）。
+   视觉照参照稿：上下虚线 + 浅底 + accent 小字加粗 ——
+   它是一条"版式分隔"，不能抢正文的注意力。 */
+.row.pbreak {
+  border-top: 1px dashed var(--line);
+  border-bottom: 1px dashed var(--line);
+  background: var(--eqbg);
+  margin: 9px 0;
+  padding: 3px 0;
+}
+.row.pbreak .en, .row.pbreak .zh {
+  font-size: var(--fs-block-sm);
+  font-weight: 700;
+  color: var(--accent);
+  letter-spacing: .4px;
+}
+
 /* 表题：贴在表格上方，与表格同一格 */
 .tcap {
   margin: 2px 0 6px;

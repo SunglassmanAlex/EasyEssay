@@ -71,6 +71,12 @@ COLLECTOR = """<script>
       tables: d.querySelectorAll('.tblbox table').length,
       fonts: d.querySelectorAll('.term, .term-en').length,
       pbreak: d.querySelectorAll('.row.pbreak, .pgmark').length,
+      // 分页标记行必须**左右两栏都占位**（只在一侧标记会让分界线断掉）。
+      // 参照稿的写法就是 `.row.pbreak` 里同时有 .en 与 .zh。
+      pbreakOneSided: Array.prototype.filter.call(
+        d.querySelectorAll('.row.pbreak'), function (r) {
+          return !r.querySelector('.en') || !r.querySelector('.zh');
+        }).length,
       failed: (d.querySelector('.load-error') ? d.querySelector('.load-error').textContent : '')
     };
     var box = d.createElement('div');
@@ -149,8 +155,13 @@ def run(html_path: Path, expect_rows: int | None, budget_ms: int) -> int:
     if expect_rows is not None and data["rows"] != expect_rows:
         print(f"  ❌ 段落行数不符：期望 {expect_rows}，实际 {data['rows']}")
         return 1
-    if data["pbreak"] != 0:
-        print(f"  ❌ 还有换页标记 {data['pbreak']} 处（用户明确要求去掉）")
+    # ⚠️ 这条断言的方向**在 2026-09-16 反转过**：
+    # 早先用户明确要求"去掉换页提示"，所以当时断言 pbreak == 0；
+    # 后来用户以参照成品稿为标准，而参照稿**有**分页标记行（.row.pbreak，13 条），
+    # 导出页自己的说明文字也一直宣称"每两页之间有一条虚线分页标记行"。
+    # 现在的要求是：**要有**，且每一条都必须左右两栏都占位。
+    if data.get("pbreakOneSided"):
+        print(f"  ❌ 有 {data['pbreakOneSided']} 条分页标记行只占一栏（分界线会断）")
         return 1
     print("  ✅ 真实浏览器里没有 JS 错误")
     return 0

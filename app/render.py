@@ -108,16 +108,18 @@ def build_standalone_html(doc: dict, api_base: str = "http://127.0.0.1:8765",
 </style>
 </head>
 <body class="ee-standalone" data-api-base="{api_base}">
-<header class="ee-topbar">
-  <div class="ee-topbar-left">
-    <span class="ee-logo">EasyEssay</span>
-    <span class="ee-doc-title" title="{_html_escape(title)}">{_html_escape(title)}</span>
-    <span class="ee-note">{_html_escape(note)}</span>
-  </div>
+<!-- 导出物是**一份文档**，不是应用界面：头部只留标题与说明，
+     控制按钮挪到右下角悬浮（参照稿也就是一个右下角的切换钮）。
+     原来的应用顶栏（logo + 进度条）会让读者一眼觉得"这是个网页应用"。 -->
+<header class="ee-doc-head">
+  <h1 class="ee-doc-h1">{_html_escape(title)}</h1>
+  <div class="ee-doc-meta">{_html_escape(note)}</div>
+</header>
+<div class="ee-topbar ee-floatbar">
   <div class="ee-topbar-actions">
     <button class="ee-btn" data-act="view-all" title="显示原文+译文">对照</button>
-    <button class="ee-btn" data-act="view-en" title="只显示英文原文">仅原文</button>
-    <button class="ee-btn" data-act="view-zh" title="只显示中文译文">仅译文</button>
+    <button class="ee-btn" data-act="view-en" title="只显示英文原文">原文</button>
+    <button class="ee-btn" data-act="view-zh" title="只显示中文译文">译文</button>
     <button class="ee-btn" data-act="toggle-raw" title="在「重建原文」与「PDF 直抽原文」之间切换">原始抽取</button>
     <button class="ee-btn" data-act="toggle-ref" title="显示/隐藏参考文献">参考文献</button>
     <button class="ee-btn" data-act="font-minus">A-</button>
@@ -126,8 +128,7 @@ def build_standalone_html(doc: dict, api_base: str = "http://127.0.0.1:8765",
     <button class="ee-btn" data-act="toggle-theme">明/暗</button>
     {ask_btn}
   </div>
-</header>
-<div class="ee-progress"><div class="ee-progress-bar" style="width:100%"></div></div>
+</div>
 <main class="ee-reader" id="ee-reader"></main>
 {ask_panel}
 <script>
