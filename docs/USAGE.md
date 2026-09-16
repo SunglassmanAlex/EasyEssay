@@ -144,7 +144,25 @@ python packaging/make_icon.py                # 重新生成应用图标（代码
 把 zip 发给别人，解压双击即用；或者打 tag 推到 GitHub，自动为三平台构建并挂到 Release
 （见 `.github/workflows/release.yml`）。
 
+### 打包时要不要带 OCR？
+
+默认**不带**。扫描版 PDF 需要 OCR 时：
+
+```bash
+python packaging/build.py --zip --with-ocr    # 体积从 ~60 MB 涨到 ~124 MB
+```
+
+（不带 OCR 时扫描件请用源码方式运行，并 `pip install -r requirements-ocr.txt`。）
+
+⚠️ 不要图省事让打包脚本"装了 OCR 就带上"：本机一旦装过 `rapidocr-onnxruntime`，
+`onnxruntime` + `opencv` + `numpy` 会被一起拖进去，exe 体积直接翻倍。
+而且**光从 `--hidden-import` 里拿掉没用** —— PyInstaller 按代码里的 import 语句
+静态收集，`app/ocr.py` 里那句懒加载 import 照样会被它揪出来，
+必须 `--exclude-module` 才真的不打进去（见 `packaging/build.py` 的 `_OCR_MODULES`）。
+打包结束会打印体积与 OCR 状态，方便核对。
+
 ## 10. 命令行批量转换
+
 
 不想开浏览器时（例如批量处理一堆 PDF）：
 
@@ -160,22 +178,33 @@ python -m app.cli --help                                  # 全部参数
 
 ## 11. 自测（不需要 API Key）
 
-改动代码后建议跑一遍，两条都绿再交付：
+改动代码后建议跑一遍，全绿再交付：
 
 ```bash
 # 接口层端到端（上传→抽取→翻译→导出→问答，含 404/错误码；不需要 API Key）
 python scripts/http_test.py
 
 # 翻译流水线（分批 / 术语表 / 漏返补漏 / 断点续译 / 停止 / 单段重译 / 流式问答 /
-#   字形名还原 / 表格整块抽取与整表翻译 / 导出；当前 77 项）
+#   字形名还原 / 表格整块抽取与整表翻译 / 导出；当前 78 项）
 python scripts/pipeline_test.py
 
 # 首页「填 Key 即用」流程（jsdom 驱动真实页面）
 EE_JSDOM=<jsdom 路径> node scripts/ui_smoke.js
 
-# 前端无头渲染（jsdom 真实执行导出的 HTML：双栏对齐、术语高亮、公式、视图切换）
+# 前端无头渲染（jsdom 真实执行导出的 HTML：双栏对齐、术语高亮、公式、表格、视图切换）
 EE_JSDOM="<你的 node_modules>/jsdom" \
   node scripts/render_test.js "samples/demo-plonk/PLONK-论文前两页-中英对照示例.html"
+
+# ★ 真实浏览器检查（jsdom **替代不了**这一步，见下）
+python scripts/browser_check.py "site/papers/xxx.html" --rows 152   # 离线导出页
+python scripts/browser_check.py "http://127.0.0.1:8765/reader?doc=<id>"   # 在线页面
+```
+
+⚠️ **jsdom 只能断言 DOM 结构，不能证明"页面在浏览器里不报错"**：
+实测 `(function(){'use strict'; undeclaredX = 1; })()` 在 jsdom 里不抛异常，
+真实浏览器按规范抛 `ReferenceError`。曾因此漏掉一个"阅读页整页加载失败"的 bug
+（`prevPageEnd is not defined`），所以 `browser_check.py` 用真 Chrome 再跑一遍，
+没装浏览器时会自动跳过。
 ```
 
 原理：`app/mock.py` 实现了与 `DeepSeekClient` 完全相同的接口，且**故意**返回

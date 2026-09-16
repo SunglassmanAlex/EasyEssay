@@ -156,13 +156,58 @@ def run(html_path: Path, expect_rows: int | None, budget_ms: int) -> int:
     return 0
 
 
+def check_url(browser: str, url: str, budget_ms: int) -> int:
+    """检查一个**在线页面**（例如应用的阅读页）。
+
+    在线页面没法注入收集器（HTML 不由我们生成），所以退一步只看 DOM：
+    段落行数、真实表格数、以及页面自己显示的错误提示。
+    这足以抓住"整页加载失败"（那种情况下行数会是 0 或 1）。
+    """
+    cmd = [browser, "--headless=new", "--disable-gpu", "--no-sandbox",
+           "--hide-scrollbars", f"--virtual-time-budget={budget_ms}", "--dump-dom", url]
+    try:
+        r = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8",
+                           errors="replace", timeout=150)
+    except Exception as exc:  # noqa: BLE001
+        print(f"  ❌ 浏览器执行失败：{exc}")
+        return 1
+    dom = r.stdout or ""
+    if not dom.strip():
+        print("  ❌ 浏览器没有返回 DOM")
+        return 1
+    rows = len(re.findall(r'data-id="p\d', dom))
+    tables = dom.count("<table")
+    empty = re.search(r'class="ee-empty-state"[^>]*>(.{0,160}?)</div>', dom, re.S)
+    bad = re.search(r'load-error[^>]*>(.{0,160}?)</', dom, re.S)
+    print(f"  URL：{url}")
+    print(f"  段落行 {rows}，table {tables}，换页标记 "
+          f"{dom.count('row pbreak') + dom.count('pgmark')}")
+    if empty:
+        print("  ⚠️ 页面提示:", re.sub(r"<[^>]+>", "", empty.group(1)).strip()[:120])
+    if bad:
+        print("  ❌ 页面显示错误:", re.sub(r"<[^>]+>", "", bad.group(1)).strip()[:160])
+        return 1
+    if rows == 0:
+        print("  ❌ 一行都没渲染出来（整页加载失败）")
+        return 1
+    print("  ✅ 在线页面渲染正常")
+    return 0
+
+
 def main() -> int:
-    ap = argparse.ArgumentParser(description="用真实浏览器检查导出页是否报错")
-    ap.add_argument("html", help="要检查的 HTML 文件")
-    ap.add_argument("--rows", type=int, default=None, help="期望的段落行数")
+    ap = argparse.ArgumentParser(description="用真实浏览器检查页面是否报错")
+    ap.add_argument("target", help="要检查的 HTML 文件，或 http(s):// 开头的页面地址")
+    ap.add_argument("--rows", type=int, default=None, help="期望的段落行数（仅文件模式）")
     ap.add_argument("--budget", type=int, default=8000, help="虚拟时间预算（毫秒）")
     args = ap.parse_args()
-    path = Path(args.html)
+
+    browser = find_browser()
+    if not browser:
+        print("  （跳过：未找到 Chrome/Edge）")
+        return 0
+    if args.target.startswith(("http://", "https://")):
+        return check_url(browser, args.target, args.budget)
+    path = Path(args.target)
     if not path.exists():
         print(f"文件不存在：{path}")
         return 1
