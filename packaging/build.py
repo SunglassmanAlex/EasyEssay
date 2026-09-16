@@ -137,8 +137,23 @@ def main() -> int:
         return 2
 
     dist = DIST
+    # ⚠️ **绝不能整个删掉 dist/**：打包产物（exe/zip）放在 dist/，但 exe 运行时的
+    #    数据目录也是它自己旁边的 data/（见 config._writable_root），
+    #    也就是 **dist/data 里存着用户的文档**。整目录 rmtree 会把用户的论文删掉 ——
+    #    2026-09-16 就这么删过一次（用户上传的 Compass 论文）。
+    #    所以只删构建产物，保留 data/。
     if dist.exists():
-        shutil.rmtree(dist, ignore_errors=True)
+        for junk in list(dist.iterdir()):
+            if junk.name == "data":
+                docs = junk / "docs"
+                n = len([d for d in docs.iterdir() if d.is_dir()]) if docs.exists() else 0
+                print(f"  保留用户数据目录：{junk}（{n} 个文档，打包不会动它）")
+                continue
+            if junk.is_dir():
+                shutil.rmtree(junk, ignore_errors=True)
+            else:
+                junk.unlink(missing_ok=True)
+    dist.mkdir(parents=True, exist_ok=True)
 
     # 图标：没有就现场生成（用代码画，不依赖外部素材）
     icon = Path(__file__).resolve().parent / ("icon.ico" if platform.system() == "Windows"
