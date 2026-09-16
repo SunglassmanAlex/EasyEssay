@@ -114,9 +114,13 @@ class MockClient:
         if not isinstance(payload, dict) or "lines" not in payload:
             return None
         steps, setup = [], []
+        title = str(payload.get("title") or "").strip()
         for ln in payload.get("lines") or []:
             text = re.sub(r"^\s*\(?\d+[\.\)]?\s+", "", str(ln)).strip()
             if not text:
+                continue
+            # 标题行单独放 title，不再重复进 steps（真实模型也会这么做）
+            if text == title:
                 continue
             if re.search(r"\b(Input|Output|输入|输出)\s*[:：]", text, re.I):
                 setup.append(text)
