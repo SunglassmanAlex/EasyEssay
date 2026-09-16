@@ -57,3 +57,5 @@ attic/
 
 # —— AI 助手的工作笔记（不属于应用本身，含本机路径等信息）——
 .workbuddy-ai/
+
+translate.log
