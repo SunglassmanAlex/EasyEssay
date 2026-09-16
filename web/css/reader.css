@@ -388,6 +388,20 @@ blockquote {
   overflow-x: auto;
 }
 .figbox .fline { margin: 1px 0; }
+/* 图上的标签（刻度/图例）：弱化、小字、单行省略 —— 只作参照，不翻译 */
+.figbox .figlabels {
+  margin-top: 4px;
+  font-size: var(--fs-block-sm);
+  color: var(--muted);
+  opacity: .85;
+}
+/* 图上的标签（刻度/图例）：弱化、小字、单行省略 —— 只作参照，不翻译 */
+.figbox .figlabels {
+  margin-top: 4px;
+  font-size: var(--fs-block-sm);
+  color: var(--muted);
+  opacity: .85;
+}
 .figbox .figcap {
   margin-top: 7px;
   font-size: var(--fs-block-sm);

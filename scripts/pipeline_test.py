@@ -659,6 +659,39 @@ def main() -> None:
         store.delete_doc(tdoc2)
 
 
+        # ------------------------------------------------------------ 18
+        print("\n== 18. 交付验收自检（规格第 10 节）==")
+        # 这些是"能不能交付"的硬条件，之前靠人眼看，现在脚本化。
+        # 抽一份合成页 + 用 mock 翻一遍，再用验收脚本查那一套。
+        import subprocess as _sp
+        cdoc = store.create_doc("验收自检", tmp_pdf, "blocks.pdf")
+        store.save_extracted(cdoc, bdata)
+        T.make_client = lambda st_: client
+        T.translate_document(cdoc, settings, force=True)
+        cmeta = store.get_meta(cdoc)
+        cex = store.load_extracted(cdoc)
+        ctr = store.load_translations(cdoc)
+        chtml = Path(tmp_dir) / "conform.html"
+        render.export_doc_to_file({"id": cdoc, "title": "验收自检",
+                                   "paragraphs": cex["paragraphs"],
+                                   "translations": ctr, "meta": cmeta}, chtml)
+        cp = _sp.run([sys.executable, str(ROOT / "scripts" / "conformance_check.py"),
+                      str(chtml), "--doc", cdoc],
+                     capture_output=True, text=True, encoding="utf-8")
+        out = cp.stdout or ""
+        print("\n".join("  " + x for x in out.strip().splitlines()[-14:]))
+        # 渲染层硬条件必须全过（数据层的"100% 覆盖"由第 17 节与翻译流程保证）
+        for line in out.splitlines():
+            if line.strip().startswith("❌") and "100% 段落有译文" not in line \
+                    and "status 不为 partial" not in line \
+                    and "存在全局术语表" not in line:
+                check(f"验收自检通过：{line.strip()[1:].strip()[:52]}", False)
+        check("验收自检无渲染层失败",
+              not any(l.strip().startswith("❌") and
+                      ("标签配平" in l or "$" in l or "术语" in l or "表格" in l)
+                      for l in out.splitlines()))
+        store.delete_doc(cdoc)
+
     finally:
         # ⚠️ 清理必须放在 finally，但**测试节必须留在 try 里**：第 12/13/15 节依赖
         # T.make_client 被换成计数用 mock，如果把它们写到 finally 之后，

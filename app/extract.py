@@ -13,6 +13,9 @@ from pathlib import Path
 from typing import Any
 
 from . import glyphnames, mathify, tables
+# 直接导入这个函数：函数体里有局部变量也叫 tables（表块列表），
+# 会遮蔽模块名（踩过）
+from .tables import looks_caption, looks_like_figure_label
 
 try:  # PyMuPDF 新版本推荐 import pymupdf；旧版本只有 fitz
     import pymupdf as fitz
@@ -98,6 +101,21 @@ def _rows_to_markdown(rows: list | None) -> str:
     return "\n".join(lines)
 
 
+def _renumber(paragraphs: list[dict]) -> list[dict]:
+    """把段落 id 重编成连续序号（p0001…）。
+
+    ⚠️ 为什么必须重编：id 是抽取时按顺序发的，而抽取末尾还会
+    **合并字形碎片**（`_merge_glyph_fragments` 把被切断的公式并回上一条）
+    并丢掉页眉页脚 —— 被并掉/丢掉的 id 就成了空洞。
+    空洞会让"缺段"看起来像漏抽，也让交付自检的"编号不得跳号"永远过不了
+    （实测缺 15/38/95/107）。
+    重编号后 id 连续；重抽流程会按内容锚点把译文搬过来。
+    """
+    for i, p in enumerate(paragraphs, 1):
+        p["id"] = f"p{i:04d}"
+    return paragraphs
+
+
 def _caption_like(block: dict) -> bool:
     """块看起来是不是题注（`Table 1:` / `Figure 2:`）。
 
@@ -107,7 +125,7 @@ def _caption_like(block: dict) -> bool:
     text = block.get("text")
     if not text:
         text = " ".join(sp["text"] for ln in block.get("lines", []) for sp in ln["spans"]).strip()
-    return tables.looks_caption(text or "")
+    return looks_caption(text or "")
 
 
 def _page_tables(page, size: float = 10.0, captions: list[dict] | None = None) -> list[dict]:
@@ -571,9 +589,14 @@ def extract_pdf(path: str | Path, page_from: int | None = None,
             mrec["kind_guess"] = "equation" if mathify.is_display_equation(text, math_ratio) else "text"
             merged.append(mrec)
 
+        for tb in tables:
+            if tb.get("kind") == "figure":
+                tb["md"] = (tb.get("figure") or {}).get("caption", "")
+
         # 被表格/图带走的题注：按 bbox 记住，生成段落时跳过（题注文本会渲染在
         # 表格的 .tcap 或图的 .figcap 里，由翻译整块处理，不再单独成段）
         absorbed_captions: set = set()
+        absorbed_labels: set = set()
         for tb in tables:
             cap = tb.get("caption")
             if not cap:
@@ -587,12 +610,57 @@ def extract_pdf(path: str | Path, page_from: int | None = None,
                     best = b
             if best is not None:
                 absorbed_captions.add(best["bbox"])
+        # —— 图例吸收 ——
+        # ⚠️ 图的**图例/子图标题常常画在图框之外**（甚至横向错开：实测图框 x≈84–160、
+        # 图例 x≈162–472），按"图框范围"取文字根本取不到，于是图例会被当成
+        # 正文段落抽出来、模型还会认真翻译它（规格 §5 明确说图内文字不该当正文翻）。
+        # 这里按"图的纵向区带 + 标签特征"吸收：区带内的短块、无句号句子结构的，
+        # 判为图的一部分（标题因为有编号/字号特征，会被 _classify 判成 heading，不受影响）。
+        for tb in tables:
+            if tb.get("kind") != "figure":
+                continue
+            fig = tb.get("figure") or {}
+            # ⚠️ 锚点用 bbox 的**底**（它含图题），不是顶：
+            # 图的 bbox 顶是"第一个子图的框"，而图例往往在那之上
+            # （实测图框顶 y=82、图例 y=72 —— 锚错了就差 10pt 全漏）
+            base = tb["bbox"][3]
+            band_lo, band_hi = base - 430.0, base + 2.0
+            for b in merged:
+                if b.get("is_table") or b.get("bbox") in absorbed_captions:
+                    continue
+                by = (b["bbox"][1] + b["bbox"][3]) / 2
+                if not (band_lo <= by <= band_hi):
+                    continue
+                # ⚠️ 读 `text` 而不是 `lines`：合并后的块里**没有 `lines` 了**
+                # （踩过两次：题注吸收一次、这里一次）
+                txt = (b.get("text") or "").strip()
+                if not txt or not looks_like_figure_label(txt):
+                    continue
+                # 标题特征（编号开头 / 短且加粗）不吸收 —— 那是章节标题
+                if re.match(r"^\s*\d+(\.\d+)*\s+\S", txt) or _caption_like(b):
+                    continue
+                # 题注（含上一张图的）是边界，不吸收
+                if looks_caption(txt):
+                    continue
+                kind_guess, _lvl = _classify(txt, float(b.get("size") or body),
+                                             body, bool(b.get("bold")),
+                                             float(b.get("math_ratio") or 0), pno, {"in_refs": False})
+                if kind_guess in ("heading", "title", "caption", "reference", "abstract"):
+                    continue
+                # ⚠️ 放进 **labels** 而不是 content：坐标轴刻度/图例不是"可读内容"，
+                # 塞进 content 会让"纯图形的图"看起来"有文字"，模型就不写译注了
+                # （测试当场抓到：合成页的纯图形图被判成"有内容"）。
+                # labels 既不进正文流、也不参与"要不要写译注"的判断，只在图上弱化展示。
+                fig.setdefault("labels", [])
+                if txt not in fig["labels"]:
+                    fig["labels"].append(txt)
+                absorbed_labels.add(b["bbox"])
 
         for b in merged:
             idx += 1
             # 题注已被表格/图吸收（渲染成 .tcap / .figcap）→ 不要再单独成段，
-            # 否则同一句题注会出现两次
-            if b.get("bbox") in absorbed_captions:
+            # 否则同一句题注会出现两次；图例同理（并进了 figure.content）
+            if b.get("bbox") in absorbed_captions or b.get("bbox") in absorbed_labels:
                 continue
             if b.get("is_table"):
                 # 伪代码与表格都算"结构化块"，但**处理方式完全不同**：
@@ -655,6 +723,8 @@ def extract_pdf(path: str | Path, page_from: int | None = None,
     title = re.sub(r"\$[^$]*\$", "", title).strip() or Path(path).stem
 
     doc.close()
+    # 合并字形碎片会吃掉一些 id → 这里统一重编号，保证不跳号
+    paragraphs = _renumber(paragraphs)
     glyph_issues = sum(p.get("glyph_issues", 0) for p in paragraphs)
     return {
         "title": title,
@@ -705,6 +775,7 @@ def extract_with_pdfplumber(path: str | Path) -> dict:
                     "id": f"p{idx:04d}", "page": pno, "kind": "text",
                     "text": mathify.plain_text_escape(chunk), "math_ratio": 0.0,
                 })
+    paragraphs = _renumber(paragraphs)
     return {"title": Path(path).stem, "paragraphs": paragraphs,
             "page_count": len(set(p["page"] for p in paragraphs)) or 1,
             "body_size": 10.0, "ocr_pages": [], "fallback": True}

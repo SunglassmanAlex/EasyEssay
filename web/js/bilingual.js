@@ -124,6 +124,21 @@
 
   // ------------------------------------------------------------ 术语高亮
 
+  /**
+   * 这个位置在不在 `$…$` 公式区间里（用 `$` 的奇偶判断，`\$` 不算）。
+   *
+   * ⚠️ 必须判：术语高亮是往**文本节点里插 `<span>`**，如果插进了 `$…$`，
+   * MathJax 拿到的是 `t_{<span ...>read</span>}` —— 直接解析失败，公式整块崩
+   * （实测导出里出现过，交付自检也能抓到）。
+   */
+  function insideMath(text, pos) {
+    var n = 0;
+    for (var i = 0; i < pos && i < text.length; i++) {
+      if (text.charAt(i) === '$' && text.charAt(i - 1) !== '\\') n++;
+    }
+    return n % 2 === 1;
+  }
+
   function highlightTerms(root, terms, lang) {
     if (!terms || !terms.length) return;
     var pairs = [];
@@ -156,7 +171,14 @@
       var text = node.nodeValue;
       var hit = null, at = -1;
       for (var i = 0; i < pairs.length; i++) {
-        var idx = text.indexOf(pairs[i].needle);
+        // 从每个可能位置往后找**第一个不在公式里的**匹配
+        var from = 0, idx = -1;
+        while (from <= text.length - pairs[i].needle.length) {
+          var k = text.indexOf(pairs[i].needle, from);
+          if (k < 0) break;
+          if (!insideMath(text, k)) { idx = k; break; }
+          from = k + 1;
+        }
         if (idx >= 0 && (at < 0 || idx < at)) { at = idx; hit = pairs[i]; }
       }
       if (!hit) return;
@@ -168,6 +190,14 @@
         span.title = hit.tip;
         frag.appendChild(span);
         rest = rest.slice(at + hit.needle.length);
+        at = -1;
+        var f2 = 0;
+        while (f2 <= rest.length - hit.needle.length) {
+          var k2 = rest.indexOf(hit.needle, f2);
+          if (k2 < 0) break;
+          if (!insideMath(rest, k2)) { at = k2; break; }
+          f2 = k2 + 1;
+        }
         at = -1; hit = null;
         for (var j = 0; j < pairs.length; j++) {
           var k = rest.indexOf(pairs[j].needle);
@@ -338,6 +368,12 @@
       d.textContent = line;
       box.appendChild(d);
     });
+    // 图上的标签（坐标轴刻度、图例）：弱化展示，**不翻译**（规格 §5）
+    if (fig.labels && fig.labels.length) {
+      var lab = el('div', 'figlabels');
+      lab.textContent = fig.labels.join(' · ');
+      box.appendChild(lab);
+    }
     if (fig.note) {
       var note = el('div', 'note');
       note.textContent = fig.note;

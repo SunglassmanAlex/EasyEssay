@@ -699,6 +699,64 @@ def figure_text(page: Any, area: dict, size: float = 10.0) -> list[str]:
     return lines[:40]
 
 
+def looks_like_figure_label(text: str) -> bool:
+    """这段文字像不像"图上的标签"（图例、子图标题、坐标轴说明）。
+
+    判据：短、没有句号分隔的句子、没有明显的句子结构。
+    典型的图例长这样：`Compass Compass w/o Lazy Eviction Compass w/ vanilla Ring ORAM`。
+    """
+    t = " ".join((text or "").split())
+    if not t or len(t) > 180:
+        return False
+    # 有"句号 + 空格 + 大写"就是正文句子，不是标签
+    return not re.search(r"[.!?]\s+[A-Z]", t)
+
+
+def _extend_up_for_labels(page: Any, area: dict,
+                          captions: list[dict] | None = None,
+                          max_up: float = 80.0) -> float:
+    """把图的范围向上扩到包住紧邻的标签块，返回新的 top。
+
+    ⚠️ 为什么必须扩：图的**图例常常画在图框上方**，不在图框内。
+    只按图框取文字的话，图例会被当成正文段落抽出来 —— 于是
+    `Compass Compass w/o Lazy Eviction …` 这种图例进了正文，
+    模型还会"认真翻译"它（规格 §5 明确说图内文字不该当正文翻译）。
+    """
+    top = float(area["top"])
+    x0, x1 = float(area["x0"]), float(area["x1"])
+    # 上界：**上面若还有另一条题注，它就是上一张图的结束** —— 到此为止。
+    # ⚠️ 不设这个上界，标签扩展会一路吞掉上一张图的刻度（踩过：合成页里
+    # Figure 2 的范围被扩到 Figure 1 的刻度区，纯图形图于是"凭空有内容"）。
+    ceiling = top - max_up
+    for other in captions or []:
+        oy = float(other["bbox"][3])
+        if oy < top and oy > ceiling:
+            ceiling = oy
+    try:
+        blocks = page.get_text("blocks")
+    except Exception:  # noqa: BLE001
+        return top
+    changed = True
+    while changed:
+        changed = False
+        for b in blocks:
+            bx0, by0, bx1, by1, text = float(b[0]), float(b[1]), float(b[2]), float(b[3]), b[4]
+            if by1 > top + 2 or by1 < ceiling:
+                continue
+            if bx1 < x0 or bx0 > x1:
+                continue
+            # ⚠️ 往上走遇到**题注**就停：那是上一张图的结束。
+            # 不判的话会一路吞掉上一张图的刻度（测试当场抓到：合成页的
+            # "纯图形图"因此凭空多出内容，模型就不写译注了）。
+            if looks_caption(text):
+                continue
+            if not looks_like_figure_label(text):
+                continue
+            top = by0
+            changed = True
+    return top
+
+
 def extract_figures(page: Any, captions: list[dict] | None,
                     used: list[dict], size: float = 10.0,
                     regions: list[dict] | None = None) -> list[dict]:
@@ -735,6 +793,9 @@ def extract_figures(page: Any, captions: list[dict] | None,
             break
         if area is None:
             area = figure_area(page, cap, captions)     # 无边框的图：退回按空白走
+        # 把图上方的"标签块"也圈进来（图例、子图标题那些）
+        area["top"] = _extend_up_for_labels(page, area, captions)
+
         content = figure_text(page, area, size)
         out.append({"bbox": (area["x0"], area["top"], area["x1"], cap["bbox"][3]),
                     "kind": "figure",

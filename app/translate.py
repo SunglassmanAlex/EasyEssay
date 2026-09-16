@@ -40,9 +40,14 @@ OUTPUT_SPEC = r"""
   图内文字非空时 `note` 给空字符串。
 - **kind 为 `algorithm` 的段落是伪代码，按行处理**：输入给的是 `algorithm.lines`
   （一行的列表，已保留行号与缩进）。返回 `"algorithm": {"lines": [译文行, ...]}`，
-  **行数与输入完全一致**，也不要返回 en/zh 字段；
-  只翻译注释（`//` 之后）、`Input:`/`Output:` 这类说明文字；
-  算法名、变量名、关键字（for/if/while/return）、运算符（←）、数字一律**保持原样**；
+  **行数与输入完全一致**，也不要返回 en/zh 字段。
+  **每一行都要处理，必须真的翻译**（原样抄回来 = 没完成）：
+  · 说明文字要翻成中文：`Input: query q, entry point ep,` → `输入：查询 q、入口点 ep`，
+    `Output: ef closest neighbors to q` → `输出：与 q 最近的 ef 个邻居`；
+  · `//` 之后的注释翻成中文；
+  · 标识符/算法名/变量名（SEARCH、efspec、C、W）、关键字（for/if/while/return/foreach）、
+    运算符（←）、数字**保持原样**；
+  · 缩进与行号位置不要动。
 - **kind 为 `table` 的段落要整表翻译**：输入给的是 `table.rows`（二维单元格数组）
   与 `table.columns`/`head_rows`。请返回 `"table": {"rows": [[译文, ...], ...]}`，
   **行列数与输入完全一致**（空的占位格保持为空），不要返回 en/zh 字段；
@@ -99,9 +104,14 @@ OUTPUT_SPEC_NO_RESTORE = r"""
   图内文字非空时 `note` 给空字符串。
 - **kind 为 `algorithm` 的段落是伪代码，按行处理**：输入给的是 `algorithm.lines`
   （一行的列表，已保留行号与缩进）。返回 `"algorithm": {"lines": [译文行, ...]}`，
-  **行数与输入完全一致**，也不要返回 en/zh 字段；
-  只翻译注释（`//` 之后）、`Input:`/`Output:` 这类说明文字；
-  算法名、变量名、关键字（for/if/while/return）、运算符（←）、数字一律**保持原样**；
+  **行数与输入完全一致**，也不要返回 en/zh 字段。
+  **每一行都要处理，必须真的翻译**（原样抄回来 = 没完成）：
+  · 说明文字要翻成中文：`Input: query q, entry point ep,` → `输入：查询 q、入口点 ep`，
+    `Output: ef closest neighbors to q` → `输出：与 q 最近的 ef 个邻居`；
+  · `//` 之后的注释翻成中文；
+  · 标识符/算法名/变量名（SEARCH、efspec、C、W）、关键字（for/if/while/return/foreach）、
+    运算符（←）、数字**保持原样**；
+  · 缩进与行号位置不要动。
 - **kind 为 `table` 的段落要整表翻译**：输入给的是 `table.rows`（二维单元格数组）
   与 `table.columns`/`head_rows`。请返回 `"table": {"rows": [[译文, ...], ...]}`，
   **行列数与输入完全一致**（空的占位格保持为空），不要返回 en/zh 字段；
@@ -232,7 +242,15 @@ def apply_algorithm_lines(alg: dict, translated: Any) -> dict | None:
     src = alg.get("lines") or []
     if not isinstance(lines, list) or len(lines) != len(src):
         return None
-    return {"lines": ["" if x is None else str(x) for x in lines]}
+    out = ["" if x is None else str(x) for x in lines]
+    # ⚠️ "原样抄回"要判失败：实测模型会把整块伪代码原封不动返回
+    # （规则里只说了"标识符保持原样"，它就把 Input/Output 的说明文字也留成英文了），
+    # 结果右栏还是英文，等于没翻。这里只在**整块逐行完全一致**时才判失败 ——
+    # 纯符号的算法块本来就该保持一致，不能按"有没有变化"一刀切。
+    if out == ["" if x is None else str(x) for x in src] and any(
+            re.search(r"[A-Za-z]{3,}\s+[A-Za-z]{3,}", ln or "") for ln in src):
+        return None
+    return {"lines": out}
 
 
 def _build_messages(batch: list[dict], system_prompt: str, target_lang: str,
@@ -464,6 +482,9 @@ def _translate_batch(client: DeepSeekClient, batch: list[dict], settings: dict,
                 out.update(sub)
             except DeepSeekError:
                 continue
+    # 入库前统一平衡 $ 转义（导出与应用内阅读共用同一份数据）
+    for rec in out.values():
+        _balance_strings(rec)
     return out, new_terms
 
 
@@ -478,6 +499,53 @@ def _update_glossary(glossary: list[list[str]], terms: list[dict], limit: int = 
         glossary.append([en, zh])
         known.add(en.lower())
     del glossary[limit:]
+
+
+def run_enrich_rounds(doc_id: str, paras: list[dict], st: dict,
+                      failed: list[str], should_stop=None) -> tuple[dict, dict, str]:
+    """跑"后两轮"：② 协议结构化、③ 术语统一。返回 (proto_stat, term_stat, proto_err)。
+
+    ⚠️ 抽成公共函数是**必须的**：这两轮原先只写在"有段落要翻"的主路径里，
+    而"早就翻完了"的文档走的是"无需翻译"的提前返回分支 —— 于是协议整理
+    与术语统一**永远轮不到它们执行**（两个都踩过：术语轮一次、协议轮一次）。
+    现有文库绝大多数都是这种"已完成"状态，这个 bug 的杀伤面很大。
+    """
+    proto_stat: dict = {}
+    proto_err = ""
+    if st.get("enrich_protocol", True) and not (should_stop and should_stop()):
+        try:
+            client2 = make_client(st)
+            try:
+                store.update_meta(doc_id, {"message": "正在整理协议/算法步骤…"})
+                proto_stat = finalize_protocols(doc_id, paras, st, client2, failed,
+                                                should_stop)
+            finally:
+                client2.close()
+        except Exception as e:  # noqa: BLE001
+            # 不能静默 pass：协议整理失败很难察觉（渲染会退回按行渲染，
+            # 看着"只是没整理"）。实测就是被吞了异常，查半天才发现整个第二轮没跑。
+            proto_err = str(e)[:200]
+    term_stat: dict = {}
+    if st.get("unify_terms", True):
+        try:
+            term_stat = unify_terms(doc_id)
+        except Exception as e:  # noqa: BLE001
+            term_stat = {"error": str(e)[:120]}
+    return proto_stat, term_stat, proto_err
+
+
+def _enrich_note(proto_stat: dict, term_stat: dict, proto_err: str) -> str:
+    """把后两轮的成果拼成一句人话（附在"完成：N/N 段"后面）。"""
+    bits = []
+    if isinstance(proto_stat, dict) and proto_stat.get("ok"):
+        bits.append(f"协议整理 {proto_stat['ok']} 处")
+    if isinstance(proto_stat, dict) and proto_stat.get("skipped"):
+        bits.append(f"协议未整理 {len(proto_stat['skipped'])} 处（{proto_stat['skipped'][0]}）")
+    if proto_err:
+        bits.append(f"协议整理失败：{proto_err}")
+    if (term_stat or {}).get("replaced"):
+        bits.append(f"术语统一 {term_stat['replaced']} 处")
+    return ("，" + "，".join(bits)) if bits else ""
 
 
 def translate_document(
@@ -499,6 +567,12 @@ def translate_document(
     paras = extracted.get("paragraphs", [])
     if not paras:
         raise RuntimeError("该文档没有可翻译的段落（抽取结果为空）")
+    # 先把结构对不上的旧译文清掉：重抽之后表的列数会变，
+    # 旧译文留着会渲出"英文 2 列 / 中文 10 列"的矛盾表（踩过）
+    try:
+        stale = purge_stale(doc_id)
+    except Exception:  # noqa: BLE001
+        stale = []
     done = store.load_translations(doc_id)
 
     def _has_zh(pid: str) -> bool:
@@ -511,22 +585,21 @@ def translate_document(
     else:
         # 注意：记录存在但 zh 为空（例如重抽后合并段落丢失了半段译文）也要重译
         todo = [p for p in paras if p["id"] not in done or not _has_zh(p["id"])]
+    # 两条路径（续译 / 已全译）都要用，所以定义在分支之前
+    failed: list[str] = []
     if not todo:
         # ⚠️ 已经全译的文档也要跑第三轮（术语统一）——
         # 现有文库绝大多数就是"早就翻完了"的状态，如果这里直接 return，
         # 术语统一永远轮不到它们执行（踩过）。
-        term_stat: dict = {}
-        if st.get("unify_terms", True):
-            try:
-                term_stat = unify_terms(doc_id)
-            except Exception:  # noqa: BLE001
-                term_stat = {}
-        msg = "无需翻译的段落"
-        if term_stat.get("replaced"):
-            msg += f"；术语统一 {term_stat['replaced']} 处"
+        # ⚠️ 这里也要跑后两轮（协议整理 + 术语统一）—— 别只跑术语轮：
+        # "已全译"是**最常见**的状态（用户点"继续翻译"时文档早就译完了），
+        # 只跑一半的话协议整理永远不生效（踩过）
+        proto_stat, term_stat, proto_err = run_enrich_rounds(
+            doc_id, paras, st, failed, should_stop)
+        msg = "无需翻译的段落" + _enrich_note(proto_stat, term_stat, proto_err)
         store.update_meta(doc_id, {"status": "ready", "progress": 1.0, "message": msg})
         return {"newly": 0, "translated": len(done), "total": len(paras),
-                "skipped": True, "terms": term_stat}
+                "skipped": True, "terms": term_stat, "protocol": proto_stat}
 
     batches = _chunk(todo, int(st.get("translate_batch_size", 8) or 8),
                      int(st.get("max_chars_per_batch", 3500) or 3500))
@@ -538,7 +611,6 @@ def translate_document(
     client = make_client(st)
     total = len(todo)
     completed = 0
-    failed: list[str] = []
     store.update_meta(doc_id, {"status": "translating", "progress": len(done) / max(1, len(paras)),
                                "message": f"待翻译 {total} 段", "error": ""})
     try:
@@ -557,7 +629,11 @@ def translate_document(
                 failed.extend(p["id"] for p in batch)
                 store.update_meta(doc_id, {"error": str(e)[:300],
                                            "message": f"第 {bi}/{len(batches)} 批失败：{str(e)[:120]}"})
-            translated = len(store.load_translations(doc_id))
+            # ⚠️ 数"真的有中文的段数"，不是"译文记录数"：
+            # 重抽/重译后记录里可能只有 en（还没翻），按记录数会虚报成 100%，
+            # 用户看到"已翻译 401/402 段"却满屏"待翻译"（踩过）。
+            translated = sum(1 for v in store.load_translations(doc_id).values()
+                             if (v or {}).get("zh"))
             info = {
                 "batch": bi, "batches": len(batches), "completed": completed,
                 "total": total, "translated": translated,
@@ -587,30 +663,15 @@ def translate_document(
     })
     # —— 第二轮：协议/伪代码结构化（.proto + <ol>）——
     # 只在"有协议块"的文档上多花 1–2 次请求；失败不影响翻译结果（渲染时退回原始行）。
-    if st.get("enrich_protocol", True) and not (should_stop and should_stop()):
-        try:
-            client2 = make_client(st)
-            try:
-                store.update_meta(doc_id, {"message": "正在整理协议/算法步骤…"})
-                finalize_protocols(doc_id, paras, st, client2, failed, should_stop)
-            finally:
-                client2.close()
-        except Exception:  # noqa: BLE001
-            pass
-
-    # —— 第三轮：术语统一（确定性替换，不再花 AI 请求）——
-    # 分批翻译必然产生"同一术语两种译法"，这里统一成多数派；
-    # 同时把术语表落盘，供重译/重抽时沿用。
-    term_stat: dict = {}
-    if st.get("unify_terms", True):
-        try:
-            term_stat = unify_terms(doc_id)
-        except Exception:  # noqa: BLE001
-            term_stat = {}
-    if term_stat.get("replaced"):
+    # —— 后两轮：协议结构化 + 术语统一（两条路径共用同一个实现）——
+    proto_stat, term_stat, proto_err = run_enrich_rounds(
+        doc_id, paras, st, failed, should_stop)
+    # 成果并进最终 message —— 顺序很重要：这两轮原本写在最终 update_meta
+    # **之后**，它们的"正在整理…"会盖住"完成：N/N 段"（踩过）
+    if proto_stat.get("ok") or term_stat.get("replaced") or proto_err:
         store.update_meta(doc_id, {
             "message": f"完成：{total_translated}/{len(paras)} 段"
-                       + f"，术语统一 {term_stat['replaced']} 处"})
+                       + _enrich_note(proto_stat, term_stat, proto_err)})
 
     # —— 第三轮：术语统一（确定性替换，不再花 AI 请求）——
     # 分批翻译必然产生"同一术语两种译法"，这里统一成多数派；
@@ -630,10 +691,71 @@ def translate_document(
     return {"newly": completed, "translated": total_translated, "total": len(paras),
             "failed": sorted(set(failed)), "batches": len(batches),
             "terms": term_stat,
+            "protocol": proto_stat if isinstance(proto_stat, dict) else {},
             "previous_status": final_meta.get("status")}
 
 
 # ---------------------------------------------------------------- 术语统一（第三轮）
+
+def _is_stale(para: dict, rec: dict) -> bool:
+    """这条译文还算不算数。
+
+    ⚠️ 重抽之后**结构会变**（符号表从 10 列修成 2 列、伪代码行数变了），
+    而旧译文还挂在同一个 id 上 —— 不清理就会渲染出"英文 2 列 / 中文 10 列"
+    这种自相矛盾的表（实测用户文档里就有：p0063 en 2 列 vs zh 10 列）。
+    判据：结构化块比形状，文字块比来源文本。
+    """
+    kind = para.get("kind")
+    if kind == "table":
+        en = para.get("table") or {}
+        zh = rec.get("table")
+        if not isinstance(zh, dict):
+            return False
+        if zh.get("columns") != en.get("columns"):
+            return True
+        if len(zh.get("rows") or []) != len(en.get("rows") or []):
+            return True
+        return False
+    if kind == "algorithm":
+        en = (para.get("algorithm") or {}).get("lines") or []
+        zh = (rec.get("algorithm") or {}).get("lines") or []
+        if zh and len(zh) != len(en):
+            return True
+        # ⚠️ "半翻"也算失效：实测模型只翻了 `//` 注释，
+        # `Input:`/`Output:` 的说明文字整行留英文（规格里点名的就是这条）。
+        # 判据：**存在"仍是英文散文"的行** —— 即该行与源行一模一样、
+        # 且含 4 个以上连续英文词。纯符号/关键字行天然会一致，不会被误判。
+        for i, src_line in enumerate(zh and en or []):
+            if i >= len(zh):
+                break
+            if en[i].strip() != zh[i].strip():
+                continue
+            if re.search(r"(?:[A-Za-z][A-Za-z'\-]*\s+){3,}[A-Za-z][A-Za-z'\-]*",
+                         en[i] or ""):
+                return True
+        return False
+    if kind == "figure":
+        en = (para.get("figure") or {}).get("content") or []
+        zh = (rec.get("figure") or {}).get("content") or []
+        # 源图里本来没文字、译文却凭空有 / 反之，都说明是旧结构
+        if bool(zh) != bool(en):
+            return True
+        return False
+    return False
+
+
+def purge_stale(doc_id: str) -> list[str]:
+    """清掉"结构已经对不上"的旧译文，让它们重新走翻译。返回被清掉的 id。"""
+    ex = store.load_extracted(doc_id)
+    done = store.load_translations(doc_id)
+    drop = [p["id"] for p in ex.get("paragraphs", [])
+            if p["id"] in done and _is_stale(p, done[p["id"]] or {})]
+    if drop:
+        for pid in drop:
+            done.pop(pid, None)
+        store.save_translations(doc_id, done)
+    return drop
+
 
 def collect_term_variants(done: dict) -> dict[str, dict[str, int]]:
     """汇总全篇术语 → {英文小写: {中文译法: 出现次数}}。"""
@@ -674,6 +796,27 @@ def build_term_map(variants: dict[str, dict[str, int]]) -> tuple[dict[str, str],
             continue
         fixed_plan[src] = dst
     return fixed_plan, skipped
+
+
+def _balance_strings(obj) -> None:
+    """把记录里所有字符串的"落单货币 $ "补成 \\$（就地改）。
+
+    ⚠️ 必须**递归覆盖所有字段**：只处理 `zh` 的话，表格单元格 / 图题 /
+    伪代码行 / 协议步骤里的 `$` 仍会破坏 `$` 成对，公式就渲染不出来
+    （规格 §6 的自检就是查这个）。
+    """
+    if isinstance(obj, list):
+        for i, v in enumerate(obj):
+            if isinstance(v, str):
+                obj[i] = mathify.balance_dollars(v)
+            else:
+                _balance_strings(v)
+    elif isinstance(obj, dict):
+        for k, v in obj.items():
+            if isinstance(v, str):
+                obj[k] = mathify.balance_dollars(v)
+            else:
+                _balance_strings(v)
 
 
 def _replace_in(obj, plan: dict[str, str]) -> int:
@@ -1001,8 +1144,14 @@ def norm_protocol(proto: dict) -> dict | None:
             "steps": steps}
 
 
-def enrich_protocol(client, title: str, lines: list[str], settings: dict) -> dict | None:
-    """跑第二轮：把协议整理成结构化步骤。失败一律返回 None（退回原始行）。"""
+def enrich_protocol(client, title: str, lines: list[str], settings: dict,
+                    min_steps: int = 2) -> tuple[dict | None, str]:
+    """跑第二轮：把协议整理成结构化步骤。
+
+    返回 `(协议, 失败原因)` —— 失败时协议为 None、原因是给人看的一句话。
+    **必须把原因带出来**：这一轮失败是"静默降级"（渲染退回按行渲染，看起来
+    只是没整理），不说明原因的话根本查不出是模型没返回还是被闸门拦了（踩过）。
+    """
     payload = {"title": title, "lines": lines}
     messages = [
         {"role": "system", "content": PROTOCOL_SYSTEM},
@@ -1012,22 +1161,33 @@ def enrich_protocol(client, title: str, lines: list[str], settings: dict) -> dic
     try:
         data = client.chat_json(messages, model=settings.get("model"),
                                 temperature=float(settings.get("temperature", 1.0) or 1.0))
-    except Exception:  # noqa: BLE001
-        return None
+    except Exception as e:  # noqa: BLE001
+        return None, f"调用失败：{str(e)[:120]}"
     proto = data.get("protocol") if isinstance(data, dict) else None
-    norm = norm_protocol(proto) if isinstance(proto, dict) else None
-    # 算法块：步骤数不得少于源行数的一半（防"17 步压成 3 句"）
-    min_steps = max(2, int(0.5 * len(lines)))
+    if not isinstance(proto, dict):
+        return None, "模型没返回 protocol 字段"
+    norm = norm_protocol(proto)
+    if norm is None:
+        return None, "返回里没有可用的 steps"
+    # 步骤数下限由调用方给：**算法块**一行一条语句 → 按行数一半要求；
+    # 而"图"（安全游戏那种）的物理行里有大量折行的续行，逻辑步骤远少于行数
+    # （实测 15 行其实只有 4 条规则），按行数要求会把**正确结果**误杀（踩过）。
     if not protocol_keeps_content(lines, norm, min_steps=min_steps):
-        return None          # 偷工减料 → 不采用
-    return norm
+        # 不采用，但**如实说明为什么**（否则整轮失败悄无声息，很难查）
+        return None, (f"验收闸门拦下：返回 {len(norm['steps'])} 步 / 源 {len(lines)} 行"
+                      f"（要求 ≥{min_steps} 步且数字齐全）")
+    return norm, ""
 
 
 def finalize_protocols(doc_id: str, paras: list[dict], st: dict,
-                       client, failed: list[str], should_stop=None) -> int:
-    """对所有需要结构化的块跑第二轮，把结果并回 translated.json。返回成功数。"""
+                       client, failed: list[str], should_stop=None) -> dict:
+    """对所有需要结构化的块跑第二轮，把结果并回 translated.json。
+
+    返回 {"ok": 成功数, "skipped": [没能结构化但**不影响交付**的 id]}。
+    """
     done = store.load_translations(doc_id)
     n = 0
+    skipped: list[str] = []
     for para in paras:
         if should_stop and should_stop():
             break
@@ -1040,13 +1200,19 @@ def finalize_protocols(doc_id: str, paras: list[dict], st: dict,
         title, lines = picked
         if not lines:
             continue
-        proto = enrich_protocol(client, title, lines, st)
+        # 只有算法块才按"行数一半"要求步骤数（一行一条语句）；
+        # 图内的散文行会折行，逻辑步骤天然少于行数
+        floor = max(2, len(lines) // 2) if para.get("kind") == "algorithm" else 2
+        proto, why = enrich_protocol(client, title, lines, st, min_steps=floor)
         if proto:
             store.merge_translations(doc_id, {para["id"]: {**rec, "protocol": proto}})
             n += 1
-        elif para["id"] not in failed:
-            failed.append(para["id"])   # 结构化失败不致命：渲染时会退回原始行
-    return n
+        else:
+            # 结构化失败**不致命**（渲染时退回按行渲染），所以**不写进 failed**——
+            # failed 是给用户看"哪些段没翻出来"的，混进来会误导（踩过：
+            # 报告"失败 2 段"其实那两段翻译是好的，只是协议没整理成功）
+            skipped.append(f"{para['id']}：{why}")
+    return {"ok": n, "skipped": skipped}
 
 
 # ---------------------------------------------------------------- 问答

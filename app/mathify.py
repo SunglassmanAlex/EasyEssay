@@ -438,6 +438,36 @@ def text_to_latex(text: str, resolver=None) -> str:
     return res.strip()   # 结尾的 \\x00 哨兵保留，等整段合并完成后再换空格
 
 
+_CURRENCY_DOLLAR = re.compile(r"(?<!\\)\$(?=\d[\d,]*(?:\.\d+)?(?![0-9A-Za-z^{_\\]))")
+
+
+def count_unescaped_dollars(text: str) -> int:
+    """数"未被转义的 `$`"。交付自检要求它是偶数（公式成对）。"""
+    return len(re.findall(r"(?<!\\)\$", text or ""))
+
+
+def balance_dollars(text: str) -> str:
+    r"""把"未转义的货币 `$`"补成 `\$`，让 `$` 成对。
+
+    为什么不能简单地"`$` 后面跟数字就转义"：`$2^{t}$`、`$2M$` 都是正常公式，
+    那样批量转会**把公式破坏掉**（规格里也点名了这一点）。
+    这里只在"未转义 `$` 计数为奇数"（说明确有落单的）时才动手，
+    且只挑**货币形态**的候选：`$` 后是完整数字，且数字后面不是字母/上标/花括号
+    —— `$4.06` 命中，`$2^{t}$` 因为数字后是 `^` 而不命中。
+    """
+    t = text or ""
+    if count_unescaped_dollars(t) % 2 == 0:
+        return t
+    for _ in range(20):
+        m = _CURRENCY_DOLLAR.search(t)
+        if not m:
+            break
+        t = t[:m.start()] + "\\$" + t[m.end():]
+        if count_unescaped_dollars(t) % 2 == 0:
+            break
+    return t
+
+
 def plain_text_escape(text: str, resolver=None) -> str:
     """非数学文本：转义会干扰 Markdown / MathJax 的字符。
 
