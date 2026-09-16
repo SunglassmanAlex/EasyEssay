@@ -1,0 +1,70 @@
+INFO:     Started server process [25588]
+INFO:     Waiting for application startup.
+INFO:     Application startup complete.
+INFO:     Uvicorn running on http://127.0.0.1:8902 (Press CTRL+C to quit)
+
+  EasyEssay 已启动
+    本机：   http://127.0.0.1:8902
+    （当前仅本机可访问；要让朋友连上用 --host 0.0.0.0 或 --open）
+    窗口：   正在打开桌面窗口…（关掉窗口即退出）
+
+INFO:     127.0.0.1:60996 - "GET /api/health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:59026 - "GET / HTTP/1.1" 200 OK
+INFO:     127.0.0.1:59026 - "GET /static/css/reader.css HTTP/1.1" 200 OK
+INFO:     127.0.0.1:60490 - "GET /static/css/app.css HTTP/1.1" 200 OK
+INFO:     127.0.0.1:62548 - "GET /static/js/md.js HTTP/1.1" 200 OK
+INFO:     127.0.0.1:52071 - "GET /static/js/api.js HTTP/1.1" 200 OK
+INFO:     127.0.0.1:49219 - "GET /static/js/app.js HTTP/1.1" 200 OK
+INFO:     127.0.0.1:49219 - "GET /api/health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:52071 - "GET /api/settings HTTP/1.1" 200 OK
+INFO:     127.0.0.1:62548 - "GET /api/docs HTTP/1.1" 200 OK
+INFO:     127.0.0.1:62548 - "GET /static/favicon.ico HTTP/1.1" 200 OK
+INFO:     127.0.0.1:62548 - "GET /api/docs HTTP/1.1" 200 OK
+INFO:     127.0.0.1:62548 - "GET /api/docs HTTP/1.1" 200 OK
+INFO:     127.0.0.1:62548 - "GET /api/docs HTTP/1.1" 200 OK
+INFO:     127.0.0.1:57742 - "GET /api/docs HTTP/1.1" 200 OK
+INFO:     127.0.0.1:55973 - "GET /api/docs HTTP/1.1" 200 OK
+INFO:     127.0.0.1:55973 - "GET /api/docs HTTP/1.1" 200 OK
+INFO:     127.0.0.1:55976 - "GET /api/docs/20260916-141631-compass-encrypted-semantic-search-with-h-99cd/export HTTP/1.1" 200 OK
+INFO:     127.0.0.1:55977 - "GET /api/docs/20260916-141631-compass-encrypted-semantic-search-with-h-99cd/export?download=true HTTP/1.1" 200 OK
+INFO:     127.0.0.1:55978 - "GET /api/docs/20260916-141631-compass-encrypted-semantic-search-with-h-99cd/export?download=false HTTP/1.1" 200 OK
+INFO:     127.0.0.1:55973 - "GET /api/docs HTTP/1.1" 200 OK
+INFO:     127.0.0.1:55973 - "GET /api/docs HTTP/1.1" 200 OK
+INFO:     127.0.0.1:55973 - "GET /api/docs HTTP/1.1" 200 OK
+INFO:     127.0.0.1:55973 - "GET /api/docs HTTP/1.1" 200 OK
+INFO:     127.0.0.1:55973 - "GET /api/docs HTTP/1.1" 200 OK
+INFO:     127.0.0.1:55973 - "GET /api/docs HTTP/1.1" 200 OK
+INFO:     127.0.0.1:55973 - "GET /api/docs HTTP/1.1" 200 OK
+INFO:     127.0.0.1:55973 - "GET /api/docs HTTP/1.1" 200 OK
+INFO:     127.0.0.1:55973 - "GET /api/docs HTTP/1.1" 200 OK
+INFO:     127.0.0.1:55973 - "GET /api/docs HTTP/1.1" 200 OK
+INFO:     127.0.0.1:55973 - "GET /api/docs HTTP/1.1" 200 OK
+INFO:     127.0.0.1:55973 - "GET /api/docs HTTP/1.1" 200 OK
+INFO:     127.0.0.1:55973 - "GET /api/docs HTTP/1.1" 200 OK
+INFO:     127.0.0.1:55973 - "GET /api/docs HTTP/1.1" 200 OK
+INFO:     127.0.0.1:55973 - "GET /api/docs HTTP/1.1" 200 OK
+INFO:     127.0.0.1:55973 - "GET /api/docs HTTP/1.1" 200 OK
+INFO:     127.0.0.1:55973 - "GET /api/docs HTTP/1.1" 200 OK
+INFO:     127.0.0.1:55973 - "GET /api/docs HTTP/1.1" 200 OK
+INFO:     127.0.0.1:55973 - "GET /api/docs HTTP/1.1" 200 OK
+INFO:     127.0.0.1:55973 - "GET /api/docs HTTP/1.1" 200 OK
+INFO:     127.0.0.1:55973 - "GET /api/docs HTTP/1.1" 200 OK
+INFO:     127.0.0.1:55973 - "GET /api/docs HTTP/1.1" 200 OK
+INFO:     127.0.0.1:55973 - "GET /api/docs HTTP/1.1" 200 OK
+INFO:     127.0.0.1:55973 - "GET /api/docs HTTP/1.1" 200 OK
+INFO:     127.0.0.1:55973 - "GET /api/docs HTTP/1.1" 200 OK
+INFO:     127.0.0.1:55973 - "GET /api/docs HTTP/1.1" 200 OK
+INFO:     127.0.0.1:55973 - "GET /api/docs HTTP/1.1" 200 OK
+INFO:     127.0.0.1:55973 - "GET /api/docs HTTP/1.1" 200 OK
+INFO:     127.0.0.1:55973 - "GET /api/docs HTTP/1.1" 200 OK
+INFO:     127.0.0.1:55973 - "GET /api/docs HTTP/1.1" 200 OK
+INFO:     127.0.0.1:55973 - "GET /api/docs HTTP/1.1" 200 OK
+INFO:     127.0.0.1:55973 - "GET /api/docs HTTP/1.1" 200 OK
+INFO:     127.0.0.1:55973 - "GET /api/docs HTTP/1.1" 200 OK
+INFO:     127.0.0.1:55973 - "GET /api/docs HTTP/1.1" 200 OK
+INFO:     127.0.0.1:55973 - "GET /api/docs HTTP/1.1" 200 OK
+INFO:     127.0.0.1:55973 - "GET /api/docs HTTP/1.1" 200 OK
+INFO:     127.0.0.1:55973 - "GET /api/docs HTTP/1.1" 200 OK
+INFO:     127.0.0.1:55973 - "GET /api/docs HTTP/1.1" 200 OK
+INFO:     127.0.0.1:55973 - "GET /api/docs HTTP/1.1" 200 OK
+INFO:     127.0.0.1:55973 - "GET /api/docs HTTP/1.1" 200 OK

@@ -178,6 +178,17 @@ def main() -> None:
         print("\n== 6. 导出 HTML ==")
         exp = client.get(f"/api/docs/{doc_id}/export?download=false")
         check("导出成功", exp.status_code == 200 and len(exp.text) > 20000, str(len(exp.text)))
+        # ⚠️ **必须单独测"带下载头"那条**：响应头是 latin-1，
+        # 而文件名里有中文（`…-中英对照.html`）—— 直接把中文塞进 filename 会让
+        # uvicorn 抛 UnicodeEncodeError，界面点「导出 HTML」就是 500（真实报障）。
+        # 之前只测 download=false（不带头）所以一路绿灯、界面却炸了。
+        dl = client.get(f"/api/docs/{doc_id}/export")           # 默认 download=true
+        check("导出（带下载头）不 500", dl.status_code == 200, str(dl.status_code))
+        cd = dl.headers.get("content-disposition", "")
+        check("下载头是 ASCII 安全的", cd.isascii() and "filename=" in cd,
+              cd[:70])
+        check("中文文件名走 RFC 6266 的 filename*",
+              "filename*=UTF-8''" in cd, cd[:90])
         check("自包含（内联样式 + 渲染脚本）",
               "<style>" in exp.text and "renderBilingual" in exp.text and ".colhead" in exp.text)
         # MathJax 必须**内联**：用户导出后只拿到一个 HTML，默认的 ./vendor/mathjax/

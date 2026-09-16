@@ -6,10 +6,12 @@
 from __future__ import annotations
 
 import json
+import re
 import sys
 import threading
 import time
 from pathlib import Path
+from urllib.parse import quote
 from typing import Any
 
 from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile
@@ -445,7 +447,19 @@ def api_export(doc_id: str, download: bool = True) -> Any:
     # 内联后 2.3 MB，但双击必然能看（见 render.build_standalone_html 的说明）。
     html = render.build_standalone_html(doc, inline_mathjax=True)
     fname = render.safe_filename(f"{meta.get('title', doc_id)}-中英对照") + ".html"
-    headers = {"Content-Disposition": f'attachment; filename="{fname}"'} if download else {}
+    headers: dict[str, str] = {}
+    if download:
+        # ⚠️ 响应头必须是 **latin-1**，而文件名里有中文（`…-中英对照.html`）——
+        # 直接把中文塞进 filename 会让 uvicorn 抛
+        # `UnicodeEncodeError: 'latin-1' codec can't encode characters`
+        # → 界面点「导出 HTML」就是 **500 Internal Server Error**（真实报障，已复现）。
+        # 按 RFC 6266 给两个名字：filename 走 ASCII 回退（保底），
+        # filename* 用 UTF-8 百分号编码（现代浏览器都用它，用户看到的还是中文名）。
+        ascii_name = re.sub(r"[^\x20-\x7e]", "_", fname).replace('"', "_") or "easyessay.html"
+        headers["Content-Disposition"] = (
+            f'attachment; filename="{ascii_name}"; '
+            f"filename*=UTF-8''{quote(fname, safe='')}"
+        )
     return HTMLResponse(html, headers=headers)
 
 
