@@ -161,7 +161,11 @@
       var needle = lang === 'zh' ? t.zh : t.en;
       if (!needle || needle.length < 2) return;
       if (seen[needle]) return;          // 已标过 → 跳过
-      pairs.push({ needle: needle, tip: [t.en, t.zh].filter(Boolean).join(' · ') });
+      // 提示 = 英文 · 中文 — 解释（有解释时）。首次出现的那个标记就是"术语登场点"，
+      // 解释挂在这里最自然（规格 §7「首次出现给英文 + 中文 + 简短解释」）。
+      var tip = [t.en, t.zh].filter(Boolean).join(' · ');
+      if (t.note) tip += '——' + t.note;
+      pairs.push({ needle: needle, tip: tip });
     });
     if (!pairs.length) return;
     pairs.sort(function (a, b) { return b.needle.length - a.needle.length; });
@@ -480,7 +484,8 @@
     // 老文档没有 glossary 时，从各段 terms 去重兜底。
     var docTerms = (doc.glossary && doc.glossary.length)
       ? doc.glossary.map(function (g) {
-          return { en: g[0] || g.en || '', zh: g[1] || g.zh || '' };
+          // 第 3 个元素是"一句话解释"（规格 §7：首次出现给「英文 + 中文 + 简短解释」）
+          return { en: g[0] || g.en || '', zh: g[1] || g.zh || '', note: g[2] || '' };
         })
       : (function () {
           var seen = {}, out = [];

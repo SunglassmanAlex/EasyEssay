@@ -653,6 +653,24 @@ def main() -> None:
               (res2.get("terms") or {}).get("conflicts", 0) >= 1, str(res2.get("terms")))
         check("少数派译法在译文里被统一",
               "不合谋" not in str(tr2["q0001"].get("zh")), str(tr2["q0001"].get("zh")))
+        # 术语解释（规格 §7：首次出现给「英文 + 中文 + 简短解释」）
+        gnotes = [g for g in store.load_glossary(tdoc2) if len(g) >= 3 and g[2]]
+        check("术语表带上了「一句话解释」", bool(gnotes),
+              f"{len(gnotes)} 条，例：{gnotes[0][2][:20] if gnotes else '（无）'}")
+        check("解释轮幂等（已有解释时不重复花钱）",
+              (T.enrich_glossary(tdoc2, settings) or {}).get("added", -1) == 0)
+        check("术语统一不会抹掉已有解释",
+              all(len(g) >= 3 and g[2] for g in store.load_glossary(tdoc2)
+                  if any(len(x) >= 3 for x in store.load_glossary(tdoc2)) or True))
+        # 术语解释（规格 §7：首次出现给「英文 + 中文 + 简短解释」）
+        gnotes = [g for g in store.load_glossary(tdoc2) if len(g) >= 3 and g[2]]
+        check("术语表带上了「一句话解释」", bool(gnotes),
+              f"{len(gnotes)} 条，例：{gnotes[0][2][:20] if gnotes else '（无）'}")
+        check("解释轮幂等（已有解释时不重复花钱）",
+              (T.enrich_glossary(tdoc2, settings) or {}).get("added", -1) == 0)
+        check("术语统一不会抹掉已有解释",
+              all(len(g) >= 3 and g[2] for g in store.load_glossary(tdoc2)
+                  if any(len(x) >= 3 for x in store.load_glossary(tdoc2)) or True))
         check("术语表落盘并可读回",
               any(g[0] == "non-colluding" for g in store.load_glossary(tdoc2)),
               f"{len(store.load_glossary(tdoc2))} 条")

@@ -88,6 +88,35 @@ class MockClient:
         """故意输出 ```json 包裹的文本，用来验证解析器的容错。"""
         return "```json\n" + json.dumps(obj, ensure_ascii=False) + "\n```"
 
+    def _glossary_json(self, messages: list[dict]) -> str | None:
+        """术语解释轮的模拟：给每条术语配一句解释。
+
+        刻意做成"能被真实校验通过"的样子（非空、≤80 字、不是废话），
+        这样这条链路才真的被测到 —— 早先没模拟它，测试也就覆盖不到。
+        """
+        if not any("术语表" in (m.get("content") or "") and "简短解释" in (m.get("content") or "")
+                   for m in messages):
+            return None
+        payload = None
+        for m in reversed(messages):
+            if m.get("role") != "user":
+                continue
+            c = m.get("content") or ""
+            i = c.find("{")
+            if i < 0:
+                continue
+            try:
+                payload, _ = json.JSONDecoder().raw_decode(c[i:])
+            except Exception:  # noqa: BLE001
+                continue
+            break
+        terms = (payload or {}).get("terms") or []
+        if not terms:
+            return None
+        return json.dumps({"terms": [
+            {"en": t.get("en", ""), "note": f"〔模拟解释〕{t.get('zh', '')}在本文中的含义"}
+            for t in terms]}, ensure_ascii=False)
+
     def _protocol_json(self, messages: list[dict]) -> str | None:
         """第二轮（协议结构化）的模拟：把行号去掉、按行拆成步骤。
 
@@ -133,6 +162,9 @@ class MockClient:
                           ensure_ascii=False)
 
     def _translate_json(self, messages: list[dict]) -> str:
+        glos = self._glossary_json(messages)
+        if glos is not None:
+            return glos
         proto = self._protocol_json(messages)
         if proto is not None:
             return proto
@@ -281,6 +313,12 @@ class MockClient:
              max_tokens: int | None = None) -> str:
         self.calls += 1
         time.sleep(0.05)  # 模拟一点网络延迟
+        # 术语解释轮先判：它的系统提示里既没有 translate_each_paragraph，
+        # 也不含 protocol 的关键词 —— 不先判就会掉进兜底的问答分支，
+        # 返回一段散文 → JSON 解析失败（实测如此）。
+        glos = self._glossary_json(messages)
+        if glos is not None:
+            return glos
         # 第二轮（协议结构化）先判：它的请求里**没有** translate_each_paragraph 这类任务标记，
         # 走 _payload_from_messages 会返回 None、掉进兜底的问答分支（踩过：
         # 结果就是第二轮"悄悄没跑"）。
