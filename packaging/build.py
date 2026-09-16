@@ -31,6 +31,14 @@ import sys
 import zipfile
 from pathlib import Path
 
+# Windows 控制台（含 CI runner）默认不是 UTF-8，不切的话下面打印中文/符号会
+# UnicodeEncodeError 直接崩 —— 本地 Git Bash 是 UTF-8，所以只在 CI 上暴露。
+for _stream in (sys.stdout, sys.stderr):
+    try:
+        _stream.reconfigure(encoding="utf-8", errors="replace")
+    except Exception:
+        pass
+
 ROOT = Path(__file__).resolve().parents[1]
 DIST = ROOT / "dist"
 NAME = "EasyEssay"

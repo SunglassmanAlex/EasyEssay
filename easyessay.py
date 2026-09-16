@@ -19,7 +19,10 @@ ROOT = Path(__file__).resolve().parent
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
+from app.console import force_utf8  # noqa: E402
 from app.main import main  # noqa: E402
+
+force_utf8()   # 必须早于任何 print：Windows 控制台默认不是 UTF-8
 
 
 def _show_fatal(message: str) -> None:

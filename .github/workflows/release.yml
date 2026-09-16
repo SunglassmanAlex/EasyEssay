@@ -15,6 +15,12 @@ jobs:
   build:
     name: 打包 ${{ matrix.os }}
     runs-on: ${{ matrix.os }}
+    # Windows runner 的控制台默认不是 UTF-8，而自测脚本要打印中文与 ✅/⟦?⟧ ——
+    # 不设这个会 UnicodeEncodeError 直接 exit 1（第一次发布就栽在这）。
+    # 代码里也做了 force_utf8 兜底，这里再加一道，防止以后新增脚本漏掉。
+    env:
+      PYTHONIOENCODING: utf-8
+      PYTHONUTF8: "1"
     strategy:
       fail-fast: false
       matrix:

@@ -29,6 +29,10 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
+from app.console import force_utf8  # noqa: E402
+force_utf8()   # Windows 控制台默认不是 UTF-8，不切的话打印中文/✅ 会直接崩
+
+
 PASS, FAIL = [], []
 
 
