@@ -61,7 +61,17 @@ jobs:
         shell: bash
         run: |
           cd dist
-          for f in *.zip; do mv "$f" "${{ matrix.artifact }}.zip"; done
+          target="${{ matrix.artifact }}.zip"
+          for f in *.zip; do
+            # ⚠️ build.py 用 platform.system().lower() 命名 zip，Linux 上恰好就叫
+            #    EasyEssay-linux-x86_64.zip，与这里的 target 同名 —— 直接 mv 会报
+            #    "are the same file" 并以 1 退出（只有 ubuntu 会踩，Win/mac 名字不同）。
+            if [ "$f" = "$target" ]; then
+              echo "已经是目标名，跳过：$f"
+              continue
+            fi
+            mv "$f" "$target"
+          done
           ls -la
 
       - uses: actions/upload-artifact@v4
@@ -78,8 +88,9 @@ jobs:
           body: |
             ## 下载即用
 
-            1. 下载对应平台的 zip 并解压到一个可写目录
-            2. 双击 `EasyEssay`（Windows 为 `EasyEssay.exe`）
-            3. 浏览器会自动打开，第一次填你自己的 DeepSeek API Key 即可
+            1. 下载对应平台的 zip 并解压到一个**可写**目录
+            2. 双击 `EasyEssay`（Windows 为 `EasyEssay.exe`）——会弹出一个**应用窗口**
+            3. 第一次在这个窗口里填你自己的 DeepSeek API Key，填一次就记住（不需要注册/登录）
 
             详细说明见压缩包里的 `README-使用说明.txt`。
+            想改用浏览器打开：`EasyEssay.exe --browser`。
