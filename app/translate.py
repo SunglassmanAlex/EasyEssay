@@ -668,7 +668,10 @@ def translate_document(
         doc_id, paras, st, failed, should_stop)
     # 成果并进最终 message —— 顺序很重要：这两轮原本写在最终 update_meta
     # **之后**，它们的"正在整理…"会盖住"完成：N/N 段"（踩过）
-    if proto_stat.get("ok") or term_stat.get("replaced") or proto_err:
+    # ⚠️ 条件里必须包含 skipped：只算 ok/replaced 的话，当"协议一个都没整理成功"
+    # 时就**不会**做最终 message 更新，界面会一直显示"正在整理协议/算法步骤…"（踩过）
+    if (proto_stat.get("ok") or proto_stat.get("skipped")
+            or term_stat.get("replaced") or proto_err):
         store.update_meta(doc_id, {
             "message": f"完成：{total_translated}/{len(paras)} 段"
                        + _enrich_note(proto_stat, term_stat, proto_err)})
