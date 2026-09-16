@@ -675,7 +675,7 @@ def figure_area(page: Any, caption: dict, captions: list[dict] | None = None,
     if keep:
         x0 = min([x0] + [b[0] for b in keep])
         x1 = max([x1] + [b[2] for b in keep])
-    return {"x0": x0, "x1": x1, "top": max(lo, ceiling), "bottom": cap_top}
+    return {"x0": x0, "x1": x1, "top": max(lo, ceiling), "bottom": cap_top - 2}
 
 
 def figure_text(page: Any, area: dict, size: float = 10.0) -> list[str]:
@@ -700,7 +700,8 @@ def figure_text(page: Any, area: dict, size: float = 10.0) -> list[str]:
 
 
 def extract_figures(page: Any, captions: list[dict] | None,
-                    used: list[dict], size: float = 10.0) -> list[dict]:
+                    used: list[dict], size: float = 10.0,
+                    regions: list[dict] | None = None) -> list[dict]:
     """抽取"图"→ [{bbox, kind:"figure", caption, content}]。
 
     为什么值得单独抽：图里的文字（图例、示意文字）以前要么被当正文翻掉、
@@ -716,7 +717,24 @@ def extract_figures(page: Any, captions: list[dict] | None,
             continue
         if any(_rects_overlap(cap["bbox"], u["bbox"]) for u in used):
             continue
-        area = figure_area(page, cap, captions)
+        # 优先用"已识别的区域"当图的范围：带边框的图（安全游戏那种盒子）
+        # 上下两条横线本身就是它的边界 —— 而"从图题往上按空白走"会在盒子内部停下，
+        # 把整块内容当成空白（踩过：Figure 4 的 17 行步骤全丢）。
+        area = None
+        for reg in regions or []:
+            if reg["ys"][-1] >= cap["bbox"][1] - 2:
+                continue
+            if cap["bbox"][1] - reg["ys"][-1] > 40:
+                continue
+            if reg["x1"] < cap["bbox"][0] or reg["x0"] > cap["bbox"][2]:
+                continue
+            # 下界用**题注的顶边**：用底边会把题注自己的文字算进"图内文字"
+            # （踩过：纯图形图因此"多出 3 行"，模型就不写译注了）
+            area = {"x0": reg["x0"], "x1": reg["x1"],
+                    "top": reg["ys"][0], "bottom": cap["bbox"][1] - 2}
+            break
+        if area is None:
+            area = figure_area(page, cap, captions)     # 无边框的图：退回按空白走
         content = figure_text(page, area, size)
         out.append({"bbox": (area["x0"], area["top"], area["x1"], cap["bbox"][3]),
                     "kind": "figure",
@@ -809,7 +827,8 @@ def extract_tables(page: Any, size: float = 10.0,
       仍会作为普通段落抽出来 —— 比硬塞进表格里好。
     """
     out: list[dict] = []
-    for reg in table_regions(page):
+    regions = table_regions(page)
+    for reg in regions:
         words = _words_in(page, reg)
         if len(words) < 4:
             continue
@@ -868,6 +887,6 @@ def extract_tables(page: Any, size: float = 10.0,
     out.extend(_ruled_tables(page, out, captions))
     # 图：挂在 Figure 题注上的那块（含图内文字）。放在表格之后，
     # 因为要按已识别的表格/伪代码区域排除重叠。
-    out.extend(extract_figures(page, captions, out, size))
+    out.extend(extract_figures(page, captions, out, size, list(regions)))
     out.sort(key=lambda t: (t["bbox"][1], t["bbox"][0]))
     return out

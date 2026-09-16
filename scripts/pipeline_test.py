@@ -566,6 +566,39 @@ def main() -> None:
         # 表题：跟着表格一起翻
         check("表格带上了题注", any(p.get("caption") for p in bt),
               next((p.get("caption") for p in bt if p.get("caption")), "(无)"))
+        # 第二轮：协议结构化（.proto + <ol>）—— 参照成品稿的做法，
+        # 把"靠缩进表达层级"的伪代码/协议整理成编号步骤
+        bdoc = store.create_doc("协议结构化自测", tmp_pdf, "blocks.pdf")
+        store.save_extracted(bdoc, bdata)
+        T.translate_document(bdoc, settings, force=True)
+        brec = store.load_translations(bdoc)
+        alg_id = ba[0]["id"] if ba else None
+        proto = (brec.get(alg_id) or {}).get("protocol") if alg_id else None
+        check("伪代码在第二轮被整理成结构化协议", bool(proto),
+              f"步骤 {len((proto or {}).get('steps') or [])}")
+        if proto:
+            check("协议步骤保留了全部行（没被压缩）",
+                  len(proto["steps"]) >= len((ba[0].get("algorithm") or {}).get("lines") or []) - 2,
+                  f"{len(proto['steps'])} 步")
+        # 闸门：偷懒/丢内容的协议必须被拒
+        lines3 = ["1  V <- ep // set", "2  for step <- 0 ... n do", "3  return W"]
+        check("偷懒的协议（压成 1 句、无数字）被拒",
+              not T.protocol_keeps_content(lines3,
+                                           {"title": "算法 1", "setup": [],
+                                            "steps": [{"text": "做一遍搜索", "subs": []}]},
+                                           min_steps=2))
+        check("丢了数字的协议被拒",
+              not T.protocol_keeps_content(lines3,
+                                           {"title": "算法 1", "setup": [],
+                                            "steps": [{"text": "V <- ep", "subs": []},
+                                                      {"text": "return W", "subs": []}]},
+                                           min_steps=2))
+        store.delete_doc(bdoc)
+
+        # 第二轮：协议结构化（.proto + <ol>）—— 参照成品稿的做法，
+        # 把"靠缩进表达层级"的伪代码/协议整理成编号步骤
+        bdoc = store.create_doc("协议结构化自测", tmp_pdf, "blocks.pdf")
+
         # 协议健壮性
         a2 = {"lines": ["1 a", "2 b", "3 c"]}
         check("伪代码行数不符时拒绝套用",

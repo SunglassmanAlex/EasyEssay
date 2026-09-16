@@ -341,6 +341,37 @@ blockquote {
 }
 .algline { min-height: 1em; }
 .algobox .pt { font-weight: 700; color: var(--accent); margin-bottom: 4px; }
+
+/* —— 协议块（第二轮 AI 整理出的编号步骤）——
+   与 algobox 的区别：靠 <ol> 表达"第几步"，不再靠缩进。
+   视觉照参照成品稿的 .proto：细边框 + 浅底 + accent 标题 + 缩进的编号列表。 */
+.proto {
+  border: 1px solid var(--boxbd);
+  background: var(--box);
+  border-radius: 6px;
+  padding: 10px 13px;
+  font-size: var(--fs-block);
+  line-height: 1.7;
+  margin: 6px 0;
+  overflow-x: auto;
+}
+.proto .pt {
+  font-weight: 700;
+  color: var(--accent);
+  font-size: calc(var(--fs-block) + 1px);
+  margin-bottom: 4px;
+}
+.proto .in { margin-bottom: 5px; color: var(--muted); font-size: var(--fs-block-sm); }
+.proto ol.steps { padding-left: 22px; margin: 4px 0; }
+.proto ol.steps > li { margin: 3px 0; }
+/* 子步骤 (a)(b)(c)：缩进 + 更小字号，别和主步骤抢视觉层级 */
+.proto ol.subs {
+  list-style: lower-alpha;
+  padding-left: 20px;
+  margin: 2px 0 2px;
+  font-size: var(--fs-block-sm);
+  color: var(--en);
+}
 .algobox .pt { font-weight: 700; color: var(--accent); margin-bottom: 4px; }
 
 /* —— 图框：把"图"框起来（参照成品级对照稿的做法）——

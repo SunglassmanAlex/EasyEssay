@@ -88,7 +88,50 @@ class MockClient:
         """故意输出 ```json 包裹的文本，用来验证解析器的容错。"""
         return "```json\n" + json.dumps(obj, ensure_ascii=False) + "\n```"
 
+    def _protocol_json(self, messages: list[dict]) -> str | None:
+        """第二轮（协议结构化）的模拟：把行号去掉、按行拆成步骤。
+
+        刻意做得"规矩"——不增删内容、数字全留 —— 这样才走得过真实代码里的
+        验收闸门（`protocol_keeps_content`），把这条链路也纳入自测。
+        """
+        if not any("排版助手" in (m.get("content") or "") for m in messages):
+            return None
+        # 注意：第二轮的用户消息**本身就是纯 JSON**（没有 translate_each_paragraph
+        # 这类任务标记），所以不能走 _payload_from_messages（它按标记筛消息）。
+        payload = None
+        for m in reversed(messages):
+            if m.get("role") != "user":
+                continue
+            content = m.get("content") or ""
+            start = content.find("{")
+            if start < 0:
+                continue
+            try:
+                payload, _ = json.JSONDecoder().raw_decode(content[start:])
+            except Exception:  # noqa: BLE001
+                continue
+            break
+        if not isinstance(payload, dict) or "lines" not in payload:
+            return None
+        steps, setup = [], []
+        for ln in payload.get("lines") or []:
+            text = re.sub(r"^\s*\(?\d+[\.\)]?\s+", "", str(ln)).strip()
+            if not text:
+                continue
+            if re.search(r"\b(Input|Output|输入|输出)\s*[:：]", text, re.I):
+                setup.append(text)
+            else:
+                steps.append({"text": text, "subs": []})
+        if not steps:
+            return None
+        return json.dumps({"protocol": {"title": str(payload.get("title") or ""),
+                                        "setup": setup, "steps": steps}},
+                          ensure_ascii=False)
+
     def _translate_json(self, messages: list[dict]) -> str:
+        proto = self._protocol_json(messages)
+        if proto is not None:
+            return proto
         payload = self._payload_from_messages(messages)
         if not payload:
             return self._fence({"items": []})
@@ -229,6 +272,12 @@ class MockClient:
              max_tokens: int | None = None) -> str:
         self.calls += 1
         time.sleep(0.05)  # 模拟一点网络延迟
+        # 第二轮（协议结构化）先判：它的请求里**没有** translate_each_paragraph 这类任务标记，
+        # 走 _payload_from_messages 会返回 None、掉进兜底的问答分支（踩过：
+        # 结果就是第二轮"悄悄没跑"）。
+        proto = self._protocol_json(messages)
+        if proto is not None:
+            return proto
         payload = self._payload_from_messages(messages)
         if payload is not None:
             if payload.get("task") == "restore_original":

@@ -573,10 +573,225 @@ def translate_document(
         "stats": {"paragraphs": len(paras), "translated": total_translated},
         "message": f"完成：{total_translated}/{len(paras)} 段" + (f"，{len(failed)} 段失败" if failed else ""),
     })
+    # —— 第二轮：协议/伪代码结构化（.proto + <ol>）——
+    # 只在"有协议块"的文档上多花 1–2 次请求；失败不影响翻译结果（渲染时退回原始行）。
+    if st.get("enrich_protocol", True) and not (should_stop and should_stop()):
+        try:
+            client2 = make_client(st)
+            try:
+                store.update_meta(doc_id, {"message": "正在整理协议/算法步骤…"})
+                finalize_protocols(doc_id, paras, st, client2, failed, should_stop)
+            finally:
+                client2.close()
+        except Exception:  # noqa: BLE001
+            pass
+
     # newly：本次真正新翻译的段数；translated：翻译后累计已译段数；total：文档总段数
     return {"newly": completed, "translated": total_translated, "total": len(paras),
             "failed": sorted(set(failed)), "batches": len(batches),
             "previous_status": final_meta.get("status")}
+
+
+# ---------------------------------------------------------------- 协议结构化（第二轮）
+
+# 第二轮：把已经翻好的伪代码/协议行整理成「标题 + 输入输出 + 编号步骤」。
+# 为什么值得单独一轮：这一步是**重排与归纳**，和"逐行翻译"是两种不同的任务，
+# 混在一次请求里会让模型两头都做不好（实测参照成品稿的做法是分两步）。
+PROTOCOL_SYSTEM = """你是排版助手。下面给你一段**已经翻译好的**协议/算法文本，
+请把它整理成结构化的步骤。
+
+【硬约束（违反即作废）】
+- **不得增删任何内容**：每一行里的信息都必须出现在 title / setup / steps 之一；
+- 数字、变量名、算法名、函数名、关键字（for/if/return/←）**原样保留**，
+  不要改写、不要"顺手优化"、不要补充原文没有的结论；
+- 去掉手工行号（`1.` `2.` `21`）—— 改用列表序号；但行号里的数字若本身是内容
+  （如 `4 n ← ef/efspec` 中的 4 是步号）则不保留；
+- 子步骤（`(a)` `(b)`、`foreach` 内层）放进对应步骤的 `subs`。
+
+【输出格式】只输出 JSON：
+{"protocol": {"title": "算法/协议标题（含编号与签名）",
+              "setup": ["输入：…", "输出：…"],
+              "steps": [{"text": "步骤正文", "subs": ["子步骤一", "子步骤二"]}]}}
+- `setup` 放 Input/Output 这类前置说明，没有就给空数组；
+- `steps` 每一步一条主语句，`subs` 没有就给空数组；
+- 不要输出解释、不要 Markdown 代码块。"""
+
+
+# ---------------------------------------------------------------- 2. 哪些块要跑
+
+def _protocol_lines(para: dict, rec: dict) -> tuple[str, list[str]] | None:
+    """挑出需要结构化的块，返回 (原始首行/标题, 待整理的行)。
+
+    两类：
+      * `kind == "algorithm"`：伪代码/算法块
+      * `kind == "figure"` 且图内文字**本身就是编号步骤**（如"安全游戏"示意图）——
+        参照成品稿把 Figure 4 这种渲成了协议块而不是图框。
+    """
+    kind = para.get("kind")
+    if kind == "algorithm":
+        alg = (rec.get("algorithm") or para.get("algorithm") or {})
+        lines = [str(x) for x in (alg.get("lines") or [])]
+        if len(lines) >= 3:
+            return (lines[0].strip(), lines)
+        return None
+    if kind == "figure":
+        # ⚠️ 判据用**原文**的行号（`para.figure.content`）而不是译文：
+        # 译文可能被加了前缀或改写，行号不再在行首，判断就失效了（踩过）。
+        src_lines = [str(x) for x in ((para.get("figure") or {}).get("content") or [])]
+        numbered = sum(1 for x in src_lines
+                       if re.match(r"^\s*\(?\d+[\.\)]\s+\S", x))
+        # 判据：**有编号项**就值得当协议整理（不要求过半都是编号行 ——
+        # 安全游戏那种是"3 条主编号 + (a)(b)(c) 子项 + 折行续行"，
+        # 按"过半"算会漏掉，实测就是这么漏的）
+        if len(src_lines) >= 4 and numbered >= 2:
+            fig = rec.get("figure") or {}
+            lines = [str(x) for x in (fig.get("content") or src_lines)]
+            title = str(fig.get("caption") or
+                        (para.get("figure") or {}).get("caption") or "").strip()
+            return (title, lines) if lines else None
+    return None
+
+
+# ---------------------------------------------------------------- 3. 校验
+
+_TOKEN_RE = re.compile(r"[A-Za-z_][A-Za-z_0-9]{1,}|\d+(?:\.\d+)?")
+
+
+_STEP_NO_RE = re.compile(r"^\s*\(?\d+[\.\)]?\s+")
+
+
+def _tokens(texts: list[str], drop_step_numbers: bool = False) -> set[str]:
+    """抽关键 token（标识符 / 数字）。
+
+    `drop_step_numbers=True` 用于**源**行：开头的 `1`、`21` 是排版用的手工行号，
+    协议规范化时本来就该去掉 —— 把它们算成"内容"会让校验永远不通过（踩过）。
+    单字符（`i`、`C`、`W`）噪声太大也不参与。
+    """
+    out: set[str] = set()
+    for t in texts:
+        text = _STEP_NO_RE.sub("", t or "") if drop_step_numbers else (t or "")
+        for m in _TOKEN_RE.findall(text):
+            if len(m) >= 2:
+                out.add(m.lower())
+    return out
+
+
+def protocol_keeps_content(lines: list[str], proto: dict | None,
+                           min_cover: float = 0.45,
+                           min_steps: int | None = None) -> bool:
+    """协议结构化结果的**验收闸门**。
+
+    三个判据（都是针对真实失败模式设计的）：
+      ① **数字必须全在** —— 下标、常量、单位、坐标值丢一个，协议就读错了；
+      ② **步骤数不能大幅缩水** —— 模型最常见的偷懒是"把 17 步压成 3 句"，
+         这种输出读起来通顺，但把协议毁了；
+      ③ token 覆盖率兜底（默认 0.45，故意定得很低）—— 只抓"整段消失"。
+         ⚠️ 不能要求 100%：第二轮输入里夹着英文残留词（`extract`、`nearest`），
+         模型把它们译成中文是正确行为，按原样字符比对会误判（踩过）。
+    """
+    if not isinstance(proto, dict):
+        return False
+    src = _tokens(lines, drop_step_numbers=True)
+    if not src:
+        return False
+
+    out_texts: list[str] = [str(proto.get("title") or "")]
+    setup = proto.get("setup")
+    if isinstance(setup, list):
+        out_texts += [str(x) for x in setup]
+    steps = proto.get("steps")
+    if not isinstance(steps, list) or not steps:
+        return False
+    for st in steps:
+        if isinstance(st, dict):
+            out_texts.append(str(st.get("text") or ""))
+            subs = st.get("subs")
+            if isinstance(subs, list):
+                out_texts += [str(x) for x in subs]
+        else:
+            out_texts.append(str(st))
+
+    # ① 数字
+    num_re = re.compile(r"\d+(?:\.\d+)?")
+    src_nums = {m for t in lines for m in num_re.findall(_STEP_NO_RE.sub("", t or ""))}
+    out_nums = {m for t in out_texts for m in num_re.findall(t or "")}
+    if not src_nums <= out_nums:
+        return False
+
+    # ② 步骤数
+    if min_steps is not None and len(steps) < min_steps:
+        return False
+
+    # ③ 覆盖率
+    out = _tokens(out_texts)
+    hit = sum(1 for t in src if t in out)
+    return hit / len(src) >= min_cover
+
+
+def norm_protocol(proto: dict) -> dict | None:
+    """把模型输出规整成固定形状（容错：steps 里给裸字符串也接受）。"""
+    steps: list[dict] = []
+    for st in (proto.get("steps") or []):
+        if isinstance(st, dict):
+            text = str(st.get("text") or "").strip()
+            subs = [str(x).strip() for x in (st.get("subs") or []) if str(x).strip()]
+        else:
+            text, subs = str(st).strip(), []
+        if text or subs:
+            steps.append({"text": text, "subs": subs})
+    if not steps:
+        return None
+    return {"title": str(proto.get("title") or "").strip(),
+            "setup": [str(x).strip() for x in (proto.get("setup") or []) if str(x).strip()],
+            "steps": steps}
+
+
+def enrich_protocol(client, title: str, lines: list[str], settings: dict) -> dict | None:
+    """跑第二轮：把协议整理成结构化步骤。失败一律返回 None（退回原始行）。"""
+    payload = {"title": title, "lines": lines}
+    messages = [
+        {"role": "system", "content": PROTOCOL_SYSTEM},
+        {"role": "user", "content": "请整理这段协议并按要求返回 JSON：\n"
+                                    + json.dumps(payload, ensure_ascii=False)},
+    ]
+    try:
+        data = client.chat_json(messages, model=settings.get("model"),
+                                temperature=float(settings.get("temperature", 1.0) or 1.0))
+    except Exception:  # noqa: BLE001
+        return None
+    proto = data.get("protocol") if isinstance(data, dict) else None
+    norm = norm_protocol(proto) if isinstance(proto, dict) else None
+    # 算法块：步骤数不得少于源行数的一半（防"17 步压成 3 句"）
+    min_steps = max(2, int(0.5 * len(lines)))
+    if not protocol_keeps_content(lines, norm, min_steps=min_steps):
+        return None          # 偷工减料 → 不采用
+    return norm
+
+
+def finalize_protocols(doc_id: str, paras: list[dict], st: dict,
+                       client, failed: list[str], should_stop=None) -> int:
+    """对所有需要结构化的块跑第二轮，把结果并回 translated.json。返回成功数。"""
+    done = store.load_translations(doc_id)
+    n = 0
+    for para in paras:
+        if should_stop and should_stop():
+            break
+        rec = done.get(para["id"]) or {}
+        if rec.get("protocol"):
+            continue
+        picked = _protocol_lines(para, rec)
+        if not picked:
+            continue
+        title, lines = picked
+        if not lines:
+            continue
+        proto = enrich_protocol(client, title, lines, st)
+        if proto:
+            store.merge_translations(doc_id, {para["id"]: {**rec, "protocol": proto}})
+            n += 1
+        elif para["id"] not in failed:
+            failed.append(para["id"])   # 结构化失败不致命：渲染时会退回原始行
+    return n
 
 
 # ---------------------------------------------------------------- 问答
