@@ -1,7 +1,7 @@
 /* EasyEssay · 双栏对照渲染核心
    左栏英文原文 / 右栏中文译文，逐段严格对齐。排版对齐「论文中英对照」成品的做法：
    - 衬线正文 + 左侧页码栏（p.5 / p.1–2）
-   - 页与页之间插入分页标记行；被页边界切断的段落在原位插入换页点
+   - 页码只出现在每段开头（左栏 p.5 / p.5–6），正文里不插换页提示
    - 独立公式放进公式框；表格左右各完整一份（数值 / 行序 / 列义一致）
    - 章节标题 / 图表题注 / 参考文献分级；页尾「全文完」
    - 术语高亮、选中片段浮出「问 AI」、右下角深浅色切换
@@ -195,21 +195,56 @@
     md.richInto(cell, text);
   }
 
-  function fillCell(cell, para, kind, pageBreak) {
-    var text = para.text || '';
-    if (kind === 'equation') { fillEquationCell(cell, text); return; }
-    if (pageBreak && typeof pageBreak.at === 'number' && pageBreak.at > 0) {
-      // 段落被页边界切断：在英文栏原位插入换页点
-      var before = text.slice(0, pageBreak.at);
-      var after = text.slice(pageBreak.at);
-      md.richInto(cell, before);
-      cell.appendChild(el('span', 'pgmark',
-        '— 换页 · 原文第 ' + pageBreak.from + ' 页 → 第 ' + pageBreak.to + ' 页 —'));
-      var cont = el('span');
-      md.richInto(cont, after);
-      while (cont.firstChild) cell.appendChild(cont.firstChild);
-      return;
+  /**
+   * 表格单元格：渲染成**真正的 <table>**，而不是把单元格拍成一行文字。
+   *
+   * 数据来自抽取阶段重建的网格（见 app/tables.py）：
+   *   {columns, head_rows, rows: [[{text, span} | null], ...]}
+   * 跨列用 colspan 表达 —— markdown 做不到这一点，所以表头会错位，
+   * 这正是"表格被拆开、排得乱七八糟"的来源。
+   */
+  function fillTableCell(cell, grid) {
+    var rows = (grid && grid.rows) || [];
+    if (!rows.length) return false;
+    var head = grid.head_rows || 0;
+    var box = el('div', 'tblbox');
+    var table = document.createElement('table');
+    var thead = document.createElement('thead');
+    var tbody = document.createElement('tbody');
+
+    function makeRow(cols, isHead, cells) {
+      var tr = document.createElement('tr');
+      for (var i = 0; i < cells.length; i++) {
+        var c = cells[i];
+        if (c === null || c === undefined) continue;   // 被 colspan 覆盖的位置
+        var cellEl = document.createElement(isHead ? 'th' : 'td');
+        var span = (typeof c === 'object' && c.span) ? c.span : 1;
+        if (span > 1) cellEl.colSpan = span;
+        var txt = (typeof c === 'object' ? (c.text || '') : String(c));
+        // 单元格里可能有 $...$（含数学符号），仍走 markdown 渲染
+        md.richInto(cellEl, txt);
+        tr.appendChild(cellEl);
+      }
+      return tr;
     }
+
+    for (var r = 0; r < rows.length; r++) {
+      (r < head ? thead : tbody).appendChild(makeRow(grid.columns, r < head, rows[r]));
+    }
+    if (thead.childNodes.length) table.appendChild(thead);
+    table.appendChild(tbody);
+    box.appendChild(table);
+    cell.appendChild(box);
+    return true;
+  }
+
+  // 注意：**不再渲染任何换页提示**。段落开头的页码（左栏的 p.5 / p.5–6）已经说明了
+  // 它来自第几页、是否跨页；再在正文里插一行提示只是噪音（用户明确要求去掉）。
+  // 所以这里连 page_break_at 都不再消费。
+  function fillCell(cell, para, kind) {
+    var text = para.text || '';
+    if (kind === 'table' && para.table && fillTableCell(cell, para.table)) return;
+    if (kind === 'equation') { fillEquationCell(cell, text); return; }
     md.richInto(cell, text);
   }
 
@@ -242,7 +277,7 @@
     head.appendChild(el('p', 'hint',
       '左 = 英文原文 · 右 = 中文译文，段落逐一对齐，两栏分界线自首页至参考文献保持同一条。'
       + '最左侧页栏标出每段在 PDF 中的<b>起始页</b>；每两页之间有一条虚线<b>分页标记行</b>。'
-      + '若某段原文被页边界切断，则标为区间 <code>p.1–2</code>，并在<b>英文栏的原位</b>插入换页点。'
+      + '若某段原文被页边界切断，页码标为区间 <code>p.1–2</code>。'
       + '表格在左右两栏各完整复现一份（左英文表头 / 右中文表头），<b>数值、行序、列义与原文一致</b>。'
       + '公式由 MathJax 渲染；若显示为 <code>$…$</code> 源码，联网后刷新即可。'));
     return head;
@@ -284,21 +319,11 @@
     var rowMap = {};
     var switches = [];
     var toc = [];
-    var prevPageEnd = null;
 
     paragraphs.forEach(function (p) {
       var from = p.page || 1;
       var to = p.page_end || from;
 
-      // 页与页之间插入分页标记行
-      if (prevPageEnd != null && from !== prevPageEnd) {
-        var br = el('div', 'row pbreak');
-        br.dataset.pg = 'p.' + prevPageEnd + '→' + from;
-        var txt = '— 换页 · 原文第 ' + prevPageEnd + ' 页 → 第 ' + from + ' 页 —';
-        br.appendChild(el('div', 'en', txt));
-        br.appendChild(el('div', 'zh', txt));
-        wrap.appendChild(br);
-      }
 
       var tr = translations[p.id] || {};
       var kind = p.kind || 'text';
@@ -323,20 +348,17 @@
 
       // 左栏优先用「重建原文」；可一键切回 PDF 直抽
       var rebuilt = typeof tr.en === 'string' && tr.en.trim() && tr.en !== p.text;
-      var pageBreak = (to !== from && typeof p.page_break_at === 'number')
-        ? { at: p.page_break_at, from: from, to: to } : null;
       if (rebuilt) {
-        fillCell(en, { kind: kind, text: state.showRaw ? p.text : tr.en }, kind,
-                 state.showRaw ? pageBreak : null);
+        fillCell(en, { kind: kind, text: state.showRaw ? p.text : tr.en, table: p.table }, kind);
         en.dataset.rebuilt = '1';
         en.title = '左栏为「重建原文」（公式已还原为标准 LaTeX）。点顶栏「原始抽取」可切回 PDF 直抽的原始文本。';
-        switches.push({ cell: en, para: p, fixed: tr.en, pageBreak: pageBreak });
+        switches.push({ cell: en, para: p, fixed: tr.en, table: p.table });
       } else {
-        fillCell(en, p, kind, pageBreak);
+        fillCell(en, p, kind);
       }
 
       if (tr.zh) {
-        fillCell(zh, { kind: kind, text: tr.zh }, kind);
+        fillCell(zh, { kind: kind, text: tr.zh, table: tr.table }, kind);
         if (tr.terms && tr.terms.length) {
           highlightTerms(en, tr.terms, 'en');
           highlightTerms(zh, tr.terms, 'zh');
@@ -382,9 +404,9 @@
         switches.forEach(function (s) {
           s.cell.innerHTML = '';
           if (state.showRaw) {
-            fillCell(s.cell, s.para, s.para.kind || 'text', s.pageBreak);
+            fillCell(s.cell, s.para, s.para.kind || 'text');
           } else {
-            fillCell(s.cell, { kind: s.para.kind, text: s.fixed }, s.para.kind || 'text', null);
+            fillCell(s.cell, { kind: s.para.kind, text: s.fixed, table: s.table }, s.para.kind || 'text');
           }
         });
         if (switches.length) typeset(wrap, function () { markMissingGlyphs(wrap); });

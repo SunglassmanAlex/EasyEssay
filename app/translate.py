@@ -12,7 +12,7 @@ import json
 import re
 from typing import Any, Callable, Iterator
 
-from . import mathify, store
+from . import mathify, store, tables
 from .deepseek import DeepSeekClient, DeepSeekError, make_client
 
 OUTPUT_SPEC = r"""
@@ -28,7 +28,11 @@ OUTPUT_SPEC = r"""
 - 输入里的 `⟦?⟧` 是 PDF 无法辨认的字形（多为大型括号/矩阵分隔符/分式线）：
   按上下文还原成最可能的 LaTeX，**绝不在 zh 里保留 `⟦?⟧`**；
 - 若该段是纯公式（$$...$$），en 与 zh 都原样返回该公式，不要添加解释；
-- terms 只列该段的关键术语（最多 4 个，en/zh 对应），没有则给空数组 []。"""
+- terms 只列该段的关键术语（最多 4 个，en/zh 对应），没有则给空数组 []；
+- **kind 为 `table` 的段落要整表翻译**：输入给的是 `table.rows`（二维单元格数组）
+  与 `table.columns`/`head_rows`。请返回 `"table": {"rows": [[译文, ...], ...]}`，
+  **行列数与输入完全一致**（空的占位格保持为空），不要返回 en/zh 字段；
+  表头同样要翻译（术语与正文保持一致）；数字、单位、模型名、缩写、符号原样保留。。"""
 
 # 模型把占位符改写成 `?`（或空括号）时，用于第二次尝试的加强指令
 STRICT_REPAIR_HINT = r"""
@@ -68,7 +72,11 @@ OUTPUT_SPEC_NO_RESTORE = r"""
 - 输入里的 `⟦?⟧` 是 PDF 无法辨认的字形（多为大型括号/矩阵分隔符/分式线）：
   按上下文还原成最可能的 LaTeX，**绝不在 zh 里保留 `⟦?⟧`**；
 - 若该段是纯公式（$$...$$），zh 原样返回该公式，不要添加解释；
-- terms 只列该段的关键术语（最多 4 个，en/zh 对应），没有则给空数组 []。"""
+- terms 只列该段的关键术语（最多 4 个，en/zh 对应），没有则给空数组 []；
+- **kind 为 `table` 的段落要整表翻译**：输入给的是 `table.rows`（二维单元格数组）
+  与 `table.columns`/`head_rows`。请返回 `"table": {"rows": [[译文, ...], ...]}`，
+  **行列数与输入完全一致**（空的占位格保持为空），不要返回 en/zh 字段；
+  表头同样要翻译（术语与正文保持一致）；数字、单位、模型名、缩写、符号原样保留。。"""
 
 # 「只重建左栏、不重译」用的输出协议：输出更短，省钱
 OUTPUT_SPEC_RESTORE = r"""
@@ -83,7 +91,8 @@ OUTPUT_SPEC_RESTORE = r"""
 规则：
 - items 与输入段落一一对应，id 必须原样返回，顺序一致，不得遗漏；
 - 不要输出 zh 字段，不要翻译，不要增删或改写任何文字；
-- 若某段本来就很规范，en 原样返回即可。"""
+- 若某段本来就很规范，en 原样返回即可；
+- **kind 为 `table` 的段落原样返回**，不要翻译、不要改动单元格。"""
 
 
 def _chunk(paras: list[dict], batch_size: int, max_chars: int) -> list[list[dict]]:
@@ -109,6 +118,49 @@ def _norm_ws(s: str) -> str:
     return _WS_RE.sub(" ", (s or "")).strip()
 
 
+def table_for_prompt(grid: dict) -> dict:
+    """把结构化表格转成"给模型看"的形状：二维字符串数组。
+
+    跨列单元格的文本放在它起始列，被覆盖的格子给空串 —— 模型只需原样保留形状，
+    返回译好的二维数组；span 结构由我们自己按原网格套回去（见 `apply_table_rows`）。
+    """
+    rows: list[list[str]] = []
+    for row in grid.get("rows") or []:
+        rows.append([(c or {}).get("text", "") if isinstance(c, dict) else "" for c in row])
+    return {"columns": int(grid.get("columns") or 0),
+            "head_rows": int(grid.get("head_rows") or 0),
+            "rows": rows}
+
+
+def apply_table_rows(grid: dict, translated: Any) -> dict | None:
+    """把模型返回的二维数组套回原来的网格结构（保留 span 与表头行数）。
+
+    行数/列数不一致就返回 None —— 宁可让调用方如实标记未翻译，也不要错位。
+    """
+    if not isinstance(translated, dict):
+        return None
+    rows = translated.get("rows")
+    src = grid.get("rows") or []
+    if not isinstance(rows, list) or len(rows) != len(src):
+        return None
+    columns = int(grid.get("columns") or 0)
+    out_rows: list[list[Any]] = []
+    for src_row, new_row in zip(src, rows):
+        if not isinstance(new_row, list) or len(new_row) != len(src_row):
+            return None
+        built: list[Any] = []
+        for src_cell, text in zip(src_row, new_row):
+            if not isinstance(src_cell, dict):
+                built.append(None)
+                continue
+            t = str(text or "").strip() or src_cell.get("text", "")
+            built.append({"text": t, "span": src_cell.get("span", 1)})
+        out_rows.append(built)
+    return {"columns": columns,
+            "head_rows": int(grid.get("head_rows") or 0),
+            "rows": out_rows}
+
+
 def _build_messages(batch: list[dict], system_prompt: str, target_lang: str,
                     glossary: list[list[str]], restore_original: bool) -> list[dict]:
     spec = OUTPUT_SPEC if restore_original else OUTPUT_SPEC_NO_RESTORE
@@ -124,11 +176,16 @@ def _build_messages(batch: list[dict], system_prompt: str, target_lang: str,
         "target_language": target_lang,
         "task": "translate_each_paragraph",
         "need_rebuilt_original": bool(restore_original),
-        "paragraphs": [
-            {"id": p["id"], "kind": p.get("kind", "text"), "en": p["text"]}
-            for p in batch
-        ],
+        "paragraphs": [],
     }
+    for p in batch:
+        item: dict[str, Any] = {"id": p["id"], "kind": p.get("kind", "text")}
+        grid = p.get("table")
+        if p.get("kind") == "table" and isinstance(grid, dict) and grid.get("rows"):
+            # 表格整块下发：给二维数组而不是拍平的文本，列对齐才不会丢
+            item["table"] = table_for_prompt(grid)
+        item["en"] = p["text"]
+        payload["paragraphs"].append(item)
     if restore_original:
         payload["note"] = ("输入里的 en 是从 PDF 抽出的原文，数学内容可能是碎的；"
                            "请按数学含义重建为规范 LaTeX 后返回。")
@@ -203,13 +260,34 @@ def _translate_batch(client: DeepSeekClient, batch: list[dict], settings: dict,
     if not isinstance(items, list):
         items = []
     raw_by_id = {p["id"]: p["text"] for p in batch}
+    src_by_id = {p["id"]: p for p in batch}
     out: dict[str, Any] = {}
     new_terms: list[dict] = []
     for it in items:
         if not isinstance(it, dict):
             continue
         pid, zh, terms, en = _norm_item(it)
-        if not pid or not zh:
+        if not pid:
+            continue
+        src = src_by_id.get(pid) or {}
+        grid = src.get("table") if isinstance(src.get("table"), dict) else None
+        # 表格段落：zh 由返回的二维数组拼出来，结构套回原网格（保留 span）
+        if grid and grid.get("rows"):
+            zh_grid = apply_table_rows(grid, it.get("table"))
+            if zh_grid is None:
+                continue          # 形状不对 → 当作没返回，让补漏/重试逻辑处理
+            rec_t: dict[str, Any] = {
+                "zh": tables.grid_to_markdown(zh_grid),
+                "terms": terms,
+                "table": zh_grid,
+            }
+            if restore:
+                rec_t["en"] = tables.grid_to_markdown(grid)
+                rec_t["en_table"] = grid
+            out[pid] = rec_t
+            new_terms.extend(terms)
+            continue
+        if not zh:
             continue
         rec: dict[str, Any] = {"zh": zh, "terms": terms}
         # 统一保存 en（即使与原文相同）：这样 translated.json 自描述、重建任务幂等，

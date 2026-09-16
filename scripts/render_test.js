@@ -90,7 +90,28 @@ setTimeout(() => {
     } else { rawOk = true; }
   } catch (e) { problems.push('视图/原文切换异常: ' + e.message); }
 
-  // ⟦?⟧（PDF 字体表坏、认不出的字形）在页面上的显示。
+  // 表格：必须是**真正的 <table>**，不是把单元格拍成一行文字
+  let tblOk = true, tblNote = '（本文件无表格）';
+  let dataTables = 0;
+  try {
+    const data = JSON.parse(d.getElementById('ee-doc-data').textContent);
+    dataTables = (data.paragraphs || []).filter(p => p.kind === 'table').length;
+  } catch (e) { /* 忽略 */ }
+  if (dataTables > 0) {
+    const boxes = d.querySelectorAll('.tblbox table');
+    // 每个表格段落左右各一张（英文 + 中文）→ 数量应是 2 倍
+    const rowsPer = Array.from(d.querySelectorAll('.row[data-id]'))
+      .filter(n => n.querySelector('.tblbox table'));
+    const first = boxes[0];
+    const trs = first ? first.querySelectorAll('tr').length : 0;
+    const spanned = first ? first.querySelectorAll('[colspan]').length : 0;
+    tblOk = boxes.length >= dataTables && trs >= 2;
+    tblNote = '数据中 ' + dataTables + ' 张表，渲染出 ' + boxes.length + ' 张；'
+      + '行数 ' + trs + '，跨列单元格 ' + spanned + '，含表格的段落行 ' + rowsPer.length;
+  }
+  if (!tblOk) problems.push('表格没有渲染成真正的 <table>（' + tblNote + '）');
+
+
   // 直接裸着晾出来跟乱码没区别 —— 必须换成带说明的小标记。
   // jsdom 里 MathJax 不会加载，所以不靠"排版之后"那条路径，直接调暴露出来的 API。
   let glyphOk = false, glyphNote = '（未测）';
@@ -124,6 +145,7 @@ setTimeout(() => {
   console.log('视图切换       :', viewOk ? 'OK' : 'FAIL');
   console.log('原文/重建切换  :', rawOk ? 'OK' : 'FAIL');
   console.log('未知字形标记   :', glyphOk ? 'OK' : 'FAIL', glyphNote);
+  console.log('表格渲染       :', tblOk ? 'OK' : 'FAIL', tblNote);
   console.log('第1段英文       :', (en[0] ? en[0].textContent.trim().slice(0, 60) : ''));
   console.log('第1段中文       :', (zh[0] ? zh[0].textContent.trim().slice(0, 60) : ''));
   const withMath = Array.from(en).find(n => /\$[^$]+\$/.test(n.textContent));

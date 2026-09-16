@@ -12,7 +12,7 @@ import re
 from pathlib import Path
 from typing import Any
 
-from . import glyphnames, mathify
+from . import glyphnames, mathify, tables
 
 try:  # PyMuPDF 新版本推荐 import pymupdf；旧版本只有 fitz
     import pymupdf as fitz
@@ -98,21 +98,24 @@ def _rows_to_markdown(rows: list | None) -> str:
     return "\n".join(lines)
 
 
-def _page_tables(page) -> list[dict]:
-    """用 PyMuPDF 的表格识别取出本页表格（拿不到就安静跳过）。"""
+def _page_tables(page, size: float = 10.0) -> list[dict]:
+    """取出本页的表格（结构化网格 + markdown 文本）。
+
+    用 `app.tables` 自己按几何重建，**不用 PyMuPDF 的 find_tables**：
+    论文里的表格几乎都是 booktabs 风格（只有横线），`lines` 策略一个都找不到；
+    `text` 策略又会把整页正文吞进去。详见 app/tables.py 的模块说明。
+    """
     try:
-        finder = page.find_tables()
-    except Exception:
+        found = tables.extract_tables(page, size)
+    except Exception:  # noqa: BLE001
         return []
     out: list[dict] = []
-    for t in getattr(finder, "tables", None) or []:
-        try:
-            md = _rows_to_markdown(t.extract())
-        except Exception:
-            continue
+    for t in found:
+        grid = t.get("table") or {}
+        md = tables.grid_to_markdown(grid)
         if not md:
             continue
-        out.append({"bbox": tuple(float(v) for v in t.bbox), "md": md})
+        out.append({"bbox": tuple(float(v) for v in t["bbox"]), "md": md, "table": grid})
     return out
 
 
@@ -436,7 +439,7 @@ def extract_pdf(path: str | Path, page_from: int | None = None,
         top_limit, bot_limit = rect.y0 + h * 0.062, rect.y1 - h * 0.055
 
         kept = []
-        tables = _page_tables(page) if use_tables else []
+        tables = _page_tables(page, body) if use_tables else []
         for b in blocks:
             y0, y1 = b["bbox"][1], b["bbox"][3]
             txt = " ".join(sp["text"] for ln in b["lines"] for sp in ln["spans"]).strip()
@@ -481,7 +484,8 @@ def extract_pdf(path: str | Path, page_from: int | None = None,
             continue
 
         combined = list(kept) + [
-            {"bbox": tb["bbox"], "is_table": True, "text": tb["md"], "lines": []}
+            {"bbox": tb["bbox"], "is_table": True, "text": tb["md"],
+             "table": tb.get("table"), "lines": []}
             for tb in tables
         ]
         ordered = _order_blocks(combined, rect.width)
@@ -489,6 +493,7 @@ def extract_pdf(path: str | Path, page_from: int | None = None,
         for b in ordered:
             if b.get("is_table"):
                 merged.append({"bbox": b["bbox"], "text": b["text"], "is_table": True,
+                               "table": b.get("table"),
                                "math_ratio": mathify.math_coverage(b["text"]),
                                "size": body, "bold": False})
                 continue
@@ -527,6 +532,10 @@ def extract_pdf(path: str | Path, page_from: int | None = None,
                     "kind": "table", "level": 0, "text": b["text"],
                     "math_ratio": round(b["math_ratio"], 3),
                     "bbox": [round(v, 1) for v in b["bbox"]],
+                    # 结构化网格：{columns, head_rows, rows:[[{text,span}|None]]}。
+                    # 表格必须**整块**翻译（拆开翻会丢掉列对齐与表头对应），
+                    # 渲染也靠它出真正的 <table>（markdown 表达不了跨列的表头）。
+                    **({"table": b["table"]} if b.get("table") else {}),
                 })
                 continue
             kind, level = _classify(b["text"], b["size"], body, b["bold"],

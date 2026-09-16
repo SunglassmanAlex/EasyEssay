@@ -258,21 +258,6 @@ a:hover { text-decoration: underline; }
   border-left: none; padding-left: 0; text-align: center;
 }
 
-/* 段内换页点 */
-.pgmark {
-  display: inline-block;
-  margin: 0 4px;
-  padding: 1px 9px;
-  background: var(--eqbg);
-  border-top: 1px dashed var(--line);
-  border-bottom: 1px dashed var(--line);
-  border-radius: 4px;
-  font-size: 11.5px;
-  font-weight: 700;
-  color: var(--accent);
-  letter-spacing: .4px;
-  white-space: nowrap;
-}
 
 /* 公式 */
 .eq {

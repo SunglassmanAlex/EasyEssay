@@ -380,10 +380,75 @@ def main() -> None:
                 if (ord(c) < 0x20 and c not in "\n\t") or 0xE000 <= ord(c) <= 0xF8FF
                 or ord(c) == 0xFFFD]
         check("接上字形名解析后仍无残留乱码码位", not bad2, str(bad2[:6]))
+        # ------------------------------------------------------------ 15
+        print("\n== 15. 表格：整块抽取 + 整表翻译 ==")
+        # 背景：论文里的表格几乎都是 booktabs 风格（只有横线、没有竖线），
+        # PyMuPDF 的 find_tables(lines) 一个都找不到 → 单元格被拍平成一段乱序文字。
+        # 现在自己按几何重建网格，并把整张表作为**一个**段落下发翻译。
+        #
+        # 注意用的是**合成样张**（带一个框线表格）：默认样张 plonk.pdf 前几页没有表格，
+        # 拿它测表格会"测了个寂寞"。
+        tbl_pdf = ROOT / "samples" / "sample-paper.pdf"
+        if not tbl_pdf.exists():
+            subprocess.run([sys.executable, str(ROOT / "scripts" / "make_sample_pdf.py")],
+                           check=True, cwd=str(ROOT))
+        tdoc = T_doc = store.create_doc("表格自测", tbl_pdf, "sample.pdf")
+        tdata = extract_pdf(tbl_pdf, 1, 3)
+        store.save_extracted(tdoc, tdata)
+        T.translate_document(tdoc, settings, force=True)
+        tbl_paras = [p for p in tdata["paragraphs"] if p.get("kind") == "table"]
+        check("识别出表格（框线表格走 PyMuPDF 兜底）", len(tbl_paras) >= 1,
+              f"{len(tbl_paras)} 个")
+        if tbl_paras:
+            tp = tbl_paras[0]
+            grid = tp.get("table") or {}
+            rows = grid.get("rows") or []
+            check("表格带结构化网格（不是一段拍平的文本）",
+                  isinstance(grid, dict) and grid.get("columns") and len(rows) >= 2,
+                  f"{grid.get('columns')} 列 × {len(rows)} 行")
+            check("表头行数已记录", isinstance(grid.get("head_rows"), int)
+                  and grid["head_rows"] >= 1, f"head_rows={grid.get('head_rows')}")
+            check("每行格数与列数一致",
+                  all(len(r) == grid["columns"] for r in rows))
+            check("单元格是 {text, span} 结构",
+                  all(isinstance(c, dict) and "text" in c and "span" in c
+                      for r in rows for c in r if c is not None))
+            # 翻译：整表下发，模型返回二维数组，结构按原网格套回
+            rec = store.load_translations(tdoc).get(tp["id"]) or {}
+            zt = rec.get("table") or {}
+            check("译文里带了整表结构", bool(zt.get("rows")), f"keys={sorted(zt)}")
+            check("行列数与原文表格一致",
+                  len(zt.get("rows") or []) == len(rows)
+                  and all(len(a) == len(b) for a, b in zip(zt.get("rows") or [], rows)))
+            check("表头被翻译了（不只是照抄）",
+                  any("〔模拟译文〕" in ((c or {}).get("text") or "")
+                      for c in (zt.get("rows") or [{}])[0] if isinstance(c, dict)))
+            store.delete_doc(tdoc)
+        # 协议健壮性：形状不对时必须拒绝，不能错位
+        good = {"columns": 2, "head_rows": 1,
+                "rows": [[{"text": "A", "span": 1}, {"text": "B", "span": 1}],
+                         [{"text": "1", "span": 1}, {"text": "2", "span": 1}]]}
+        check("模型返回行列数不符时拒绝套用（宁可标未翻译也不错位）",
+              T.apply_table_rows(good, {"rows": [["x"]]}) is None
+              and T.apply_table_rows(good, {"rows": [["x", "y"]]}) is None)
+        check("形状正确时 span 被保留",
+              (T.apply_table_rows(
+                  {"columns": 2, "head_rows": 1,
+                   "rows": [[{"text": "A", "span": 2}, None],
+                            [{"text": "1", "span": 1}, {"text": "2", "span": 1}]]},
+                  {"rows": [["甲", ""], ["一", "二"]]}) or {}).get("rows", [[{}]])[0][0]
+              .get("span") == 2)
+        # 换页提示：用户明确不要，只保留段落开头的页码
+        export_html = Path(tmp_dir) / "pipeline-export.html"
+        if export_html.exists():
+            h = export_html.read_text(encoding="utf-8")
+            check("导出里没有任何「换页」提示", "换页 ·" not in h and "pgmark" not in h)
+            check("导出里仍有段落页码栏", "p." in h)
+
     finally:
-        # 注意：清理必须放 finally，而**测试节必须留在 try 里** ——
-        # 第 12/13 节依赖 T.make_client 被替换成计数用 mock，一旦写到 finally
-        # 后面，桩已被 real_make 覆盖，mock 的行为（含 MOCK_BAD_REPAIR）全部失效。
+        # ⚠️ 清理必须放在 finally，但**测试节必须留在 try 里**：第 12/13/15 节依赖
+        # T.make_client 被换成计数用 mock，如果把它们写到 finally 之后，
+        # 桩已被 real_make 覆盖，mock 的行为（含 MOCK_BAD_REPAIR）会全部失效。
         T.make_client = real_make
         shutil.rmtree(tmp_dir, ignore_errors=True)
         for d in (probe, doc_id):

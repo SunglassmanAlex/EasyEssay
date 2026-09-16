@@ -100,6 +100,27 @@ class MockClient:
             # 第 3 次调用时故意丢掉中间一段，触发"部分缺失 → 单独重试"分支
             if self.calls == 3 and len(paras) >= 3 and i == 1:
                 continue
+            # 表格：与真实模型一致，整表返回二维数组，行列数保持一致。
+            # 表头也译（加前缀），数值/模型名原样保留。
+            tbl = p.get("table")
+            if isinstance(tbl, dict) and tbl.get("rows"):
+                grid = tbl["rows"]
+                head = int(tbl.get("head_rows") or 0)
+                new_rows = []
+                terms = []
+                for r, row in enumerate(grid):
+                    new_rows.append([
+                        (MOCK_TAG + str(c)) if (r < head and str(c).strip()) else str(c)
+                        for c in row
+                    ])
+                for c in (grid[0] if grid else []):
+                    w = str(c).split(" ")[0]
+                    if re.fullmatch(r"[A-Za-z][A-Za-z-]{4,}", w or ""):
+                        terms.append({"en": w, "zh": "模拟术语"})
+                rec_t = {"id": p.get("id"), "table": {"rows": new_rows},
+                         "terms": terms[:4]}
+                items.append(rec_t)
+                continue
             text = p.get("en", "")
             terms = []
             for w in re.findall(r"\b[A-Za-z][A-Za-z-]{6,}\b", text)[:2]:
