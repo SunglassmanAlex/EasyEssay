@@ -225,6 +225,20 @@ def main() -> None:
             check("无头渲染自测通过", p.returncode == 0)
         else:
             print("  （跳过：未找到 node / jsdom）")
+
+        # 真实浏览器检查：jsdom 对"严格模式下给未声明变量赋值"**不抛异常**
+        # （实测 jsdom 会照常创建全局，浏览器按规范抛 ReferenceError），
+        # 所以 jsdom 那套证明不了"页面在浏览器里不报错"。这里用真 Chrome 再跑一遍。
+        # 没装浏览器就跳过（退出码 0），不让 CI 因缺浏览器失败。
+        b = subprocess.run(
+            [sys.executable, str(ROOT / "scripts" / "browser_check.py"),
+             str(html_path), "--rows", str(len(paras))],
+            capture_output=True, text=True, encoding="utf-8")
+        print("\n".join("  " + l for l in (b.stdout or "").strip().splitlines()))
+        if b.stderr.strip():
+            print("  stderr:", b.stderr.strip()[:300])
+        check("真实浏览器里没有 JS 错误", b.returncode == 0)
+
         # ------------------------------------------------------------ 10
         print("\n== 10. 只重建左栏（不重译）==")
         tr_now = store.load_translations(doc_id)

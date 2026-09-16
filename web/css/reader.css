@@ -137,6 +137,21 @@ a:hover { text-decoration: underline; }
   white-space: nowrap;
 }
 .ee-btn:hover { background: var(--eqbg); }
+/* 返回文档库：顶栏里唯一的"回退"入口，做得比普通按钮显眼一点，
+   否则在十几个按钮里很难一眼找到（用户反馈"很难回到菜单"）。 */
+.ee-btn.ee-home {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  border-color: var(--accent);
+  color: var(--accent);
+  font-weight: 700;
+}
+.ee-btn.ee-home:hover {
+  background: var(--accent);
+  color: #fff;
+  text-decoration: none;
+}
 .ee-btn.active, .ee-btn[aria-pressed="true"] {
   background: var(--accent);
   border-color: var(--accent);
@@ -245,18 +260,6 @@ a:hover { text-decoration: underline; }
 .bcell.zh { color: var(--zh); border-left: 3px solid var(--line); padding-left: 15px; }
 
 /* 分页标记行 */
-.row.pbreak {
-  border-top: 1px dashed var(--line);
-  border-bottom: 1px dashed var(--line);
-  background: var(--eqbg);
-  margin: 9px 0;
-  padding: 5px 0;
-}
-.row.pbreak::before { color: var(--accent); font-size: 12px; }
-.row.pbreak .en, .row.pbreak .zh {
-  font-size: 12.5px; font-weight: 700; color: var(--accent); letter-spacing: .4px;
-  border-left: none; padding-left: 0; text-align: center;
-}
 
 
 /* 公式 */

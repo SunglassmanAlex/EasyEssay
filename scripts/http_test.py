@@ -180,8 +180,12 @@ def main() -> None:
         check("导出成功", exp.status_code == 200 and len(exp.text) > 20000, str(len(exp.text)))
         check("自包含（内联样式 + 渲染脚本）",
               "<style>" in exp.text and "renderBilingual" in exp.text and ".colhead" in exp.text)
-        check("优先用本地 MathJax（离线可渲染）",
-              "./vendor/mathjax/tex-svg.js" in exp.text)
+        # MathJax 必须**内联**：用户导出后只拿到一个 HTML，默认的 ./vendor/mathjax/
+        # 并不存在，只能回退 jsdelivr（国内常被阻断）→ 公式不渲染。内联后双击必然能看。
+        check("MathJax 已内联（下载单文件即可离线渲染）",
+              "./vendor/mathjax/tex-svg.js" not in exp.text
+              and len(exp.text) > 2_000_000
+              and "MathJax" in exp.text, f"{len(exp.text)} 字节")
         check("不含账号/令牌痕迹",
               "EASYESSay_TOKEN" not in exp.text and "/account" not in exp.text)
 

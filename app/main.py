@@ -436,7 +436,10 @@ def api_export(doc_id: str, download: bool = True) -> Any:
         "translations": store.load_translations(doc_id),
         "meta": meta,
     }
-    html = render.build_standalone_html(doc)
+    # 内联 MathJax：用户"导出后只拿到一个 HTML"是常态，而默认写法要 ./vendor/mathjax/
+    # 这个目录（下载时并不存在），只能回退 jsdelivr —— 国内常被阻断，公式就不渲染了。
+    # 内联后 2.3 MB，但双击必然能看（见 render.build_standalone_html 的说明）。
+    html = render.build_standalone_html(doc, inline_mathjax=True)
     fname = render.safe_filename(f"{meta.get('title', doc_id)}-中英对照") + ".html"
     headers = {"Content-Disposition": f'attachment; filename="{fname}"'} if download else {}
     return HTMLResponse(html, headers=headers)

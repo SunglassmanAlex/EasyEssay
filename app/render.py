@@ -36,10 +36,17 @@ def _embed_json(obj) -> str:
 
 def build_standalone_html(doc: dict, api_base: str = "http://127.0.0.1:8765",
                           author_note: str = "", enable_ask: bool = True,
-                          mathjax_local: str | None = None) -> str:
+                          mathjax_local: str | None = None,
+                          inline_mathjax: bool = False) -> str:
     """doc: {id, title, paragraphs, translations, meta?}
 
     enable_ask=False 用于发布到公网的静态页：隐藏「问 AI」入口，避免出现"连不上本地服务"。
+
+    inline_mathjax=True 时把 MathJax **整个内联**进 HTML（约 +2 MB）。
+    用于"下载一个文件就能双击看"的场景：默认走 `./vendor/mathjax/tex-svg.js`，
+    但用户单独下载 HTML 时并不存在这个目录，只能回退到 jsdelivr CDN ——
+    而国内访问 jsdelivr 常被阻断，公式就不渲染了。内联后无网也能看。
+    （站点/示例那种能一并分发 vendor 目录的场景，保持外链即可，省体积。）
     """
     css = _read("css/reader.css")
     md_js = _read("js/md.js")
@@ -64,6 +71,17 @@ def build_standalone_html(doc: dict, api_base: str = "http://127.0.0.1:8765",
     stats = body_data["meta"]["stats"] or {}
     enable_ask_js = "true" if enable_ask else "false"
     mj_local = mathjax_local if mathjax_local is not None else MATHJAX_LOCAL
+    # 默认：本地副本优先，CDN 仅作回退（拼字符串而不是 f-string，免得引号嵌套出错）
+    _fallback = ("(function(){var s=document.createElement('script');s.src='"
+                 + MATHJAX_CDN + "';document.head.appendChild(s);})()")
+    mj_tag = '<script src="' + mj_local + '" onerror="' + _fallback + '"></script>'
+    if inline_mathjax:
+        src_js = WEB_DIR / "vendor" / "mathjax" / "tex-svg.js"
+        if src_js.exists():
+            # 内联时不需要回退：本地就是最可靠的来源
+            mj_tag = "<script>" + src_js.read_text(encoding="utf-8") + "</script>"
+        else:
+            mj_tag = '<script src="' + MATHJAX_CDN + '"></script>'
     # 导出文件用 file:// 打开时带不上 Cookie，所以把「限定到本文档」的令牌嵌进来，
     # 前端以 Authorization: Bearer 发送（可在「账号」页撤销）。
     ask_btn = ('<button class="ee-btn" data-act="toggle-ask">问 AI</button>'
@@ -122,7 +140,7 @@ window.MathJax = {{
 window.EASYESSay_API = {json.dumps(api_base)};
 window.EASYESSay_STANDALONE = true;
 </script>
-<script src="{mj_local}" onerror="(function(){{var s=document.createElement('script');s.src='{MATHJAX_CDN}';document.head.appendChild(s);}})()"></script>
+{mj_tag}
 <script>
 {md_js}
 </script>

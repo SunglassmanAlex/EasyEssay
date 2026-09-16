@@ -373,7 +373,6 @@
       row.appendChild(zh);
       wrap.appendChild(row);
       rowMap[p.id] = row;
-      prevPageEnd = to;
     });
 
     // 页尾
