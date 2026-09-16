@@ -68,6 +68,7 @@ def reextract_document(doc_id: str, page_from: int | None = None,
     remapped: dict[str, dict] = {}
     moved = 0
     merged_slots = 0
+    stale = 0            # 段落变长、旧译文只覆盖前半截 → 作废等待重译
     orphan: list[str] = []
     # 按旧段落顺序处理，保证"两段并一段"时拼接顺序正确
     for pid, entry in sorted(old_tr.items(), key=lambda kv: old_order.get(kv[0], 1 << 30)):
@@ -87,6 +88,14 @@ def reextract_document(doc_id: str, page_from: int | None = None,
             orphan.append(pid)
             continue
         target = cands[0]
+        new_p = next((p for p in new_paras if p["id"] == target), None)
+        # 段落"变长了"说明内容有新增（典型情况：整段只有 ⟦?⟧ 的公式碎片被并了进来），
+        # 旧译文只覆盖前半截 —— 留着会让用户看到一条缺了半边的公式，不如作废重译。
+        if new_p is not None:
+            old_t = (old_p.get("text") or "").rstrip()
+            if new_p["text"] != old_p.get("text") and old_t and new_p["text"].startswith(old_t):
+                stale += 1
+                continue
         if target in remapped:
             remapped[target] = _concat_translations(remapped[target], entry)
             merged_slots += 1
@@ -110,6 +119,7 @@ def reextract_document(doc_id: str, page_from: int | None = None,
         "translations": len(remapped),
         "moved": moved,
         "merged_slots": merged_slots,
+        "stale": stale,
         "orphan": orphan,
         "page_count": data.get("page_count"),
         "ocr_pages": data.get("ocr_pages", []),

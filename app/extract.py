@@ -12,7 +12,7 @@ import re
 from pathlib import Path
 from typing import Any
 
-from . import mathify
+from . import glyphnames, mathify
 
 try:  # PyMuPDF 新版本推荐 import pymupdf；旧版本只有 fitz
     import pymupdf as fitz
@@ -159,6 +159,69 @@ def _merge_cross_page(paragraphs: list[dict]) -> list[dict]:
     return out
 
 
+def _is_glyph_only_fragment(p: dict) -> bool:
+    """这一段是不是"整段只剩无法辨认字形"的碎片。
+
+    实测场景：一条独立公式被 PDF 拆成多个块，其中某块的可见字符只剩下 ⟦?⟧
+    （大括号写成上下两截时就是这样）。这种段**单独存在毫无意义**，无论给模型
+    多大自由度都只能瞎猜 —— 实测输出是 `\\left[\\right]` 这种空括号。
+    """
+    text = p.get("text") or ""
+    if mathify.MISSING_GLYPH not in text:
+        return False
+    rest = text.replace(mathify.MISSING_GLYPH, "")
+    # 去掉空白、标点与纯运算符，看还剩不剩"真正的内容"
+    rest = re.sub(r"[\s.,;:!?()\[\]{}<>|/\\$~^_+\-=*]+", "", rest)
+    return not rest and len(text.strip()) <= 12
+
+
+def _recount_glyph_issues(paragraphs: list[dict]) -> None:
+    """按当前文本重算每段的字形问题数。
+
+    必须做：段落的 `glyph_issues` 是建段时记下的，碎片合并后文本变了，
+    旧计数就对不上了（表现为文档级总数少算，用户看到的"待修"数字也会偏小）。
+    """
+    for p in paragraphs:
+        n = mathify.count_missing_glyphs(p.get("text") or "")
+        if n:
+            p["glyph_issues"] = n
+        else:
+            p.pop("glyph_issues", None)
+
+
+def _bbox_overlaps(a, b) -> bool:
+    """两个 bbox 是否有明显重叠（用于判断碎片是否属于同一条公式）。"""
+    if not a or not b or len(a) < 4 or len(b) < 4:
+        return False
+    ix = min(a[2], b[2]) - max(a[0], b[0])
+    iy = min(a[3], b[3]) - max(a[1], b[1])
+    if ix <= 0 or iy <= 0:
+        return False
+    smaller = min((a[2] - a[0]) * (a[3] - a[1]), (b[2] - b[0]) * (b[3] - b[1]))
+    return smaller > 0 and (ix * iy) / smaller >= 0.5
+
+
+def _merge_glyph_fragments(paragraphs: list[dict]) -> list[dict]:
+    """把"整段只有 ⟦?⟧"的碎片并回上一段。
+
+    为什么必须合并而不是丢给模型猜：碎片和上一段本来就是同一条公式的两半
+    （大括号被拆成上/下两截，各写一半）。并起来模型看到的才是完整公式。
+    """
+    out: list[dict] = []
+    for p in paragraphs:
+        if out and _is_glyph_only_fragment(p):
+            prev = out[-1]
+            # 只在"上一段是公式"或"两者版面重叠"时才合并 —— 说明它们本属一体
+            if prev.get("kind") == "equation" or _bbox_overlaps(prev.get("bbox"), p.get("bbox")):
+                prev["text"] = prev["text"].rstrip() + " " + (p["text"] or "").strip()
+                prev["page_end"] = max(prev.get("page_end", prev["page"]), p["page"])
+                prev["math_ratio"] = mathify.math_coverage(prev["text"])
+                prev.setdefault("merged_fragments", []).append(p["id"])
+                continue
+        out.append(p)
+    return out
+
+
 def _page_blocks(page) -> list[dict]:
     """返回页面上所有文本块：{bbox, lines:[{bbox, spans}]}"""
     raw = page.get_text("dict")
@@ -199,7 +262,8 @@ def _block_dominant_size(block: dict) -> float:
     return max(counts.items(), key=lambda kv: kv[1])[0]
 
 
-def _block_markdown(block: dict, base_size: float) -> tuple[str, float]:
+def _block_markdown(block: dict, base_size: float,
+                    encodings: dict | None = None) -> tuple[str, float]:
     """把 block 内所有行合并成一段 markdown，返回 (text, 公式覆盖度)。
 
     注意这里的第二个值是「落在 $...$ 内的字符占比」（math_coverage），
@@ -209,7 +273,7 @@ def _block_markdown(block: dict, base_size: float) -> tuple[str, float]:
     """
     parts = []
     for ln in block["lines"]:
-        parts.append(mathify.spans_to_markdown(ln["spans"], base_size))
+        parts.append(mathify.spans_to_markdown(ln["spans"], base_size, encodings))
     text = _join_lines(parts)
     return text, mathify.math_coverage(text)
 
@@ -335,6 +399,11 @@ def extract_pdf(path: str | Path, page_from: int | None = None,
     total = doc.page_count
     p_from = max(1, page_from or 1)
     p_to = min(total, page_to or total)
+    # 把 CMEX 系列字体的"码位 -> 字形名"表读出来：这些字体里的码位常常被坏掉的
+    # ToUnicode 抹成控制字符/私有区，但字体自己的 /Encoding 里有可读的 TeX 字形名
+    # （parenleftBig / summationtext / circleplusdisplay…），据此可以**确定性地**
+    # 还原大括号、求和号之类，不必让模型猜（见 app/glyphnames.py）。
+    encodings = glyphnames.collect_encodings(doc)
 
     # 第一遍：收集各页块，识别重复页眉页脚
     pages: list[dict] = []
@@ -423,7 +492,7 @@ def extract_pdf(path: str | Path, page_from: int | None = None,
                                "math_ratio": mathify.math_coverage(b["text"]),
                                "size": body, "bold": False})
                 continue
-            text, math_ratio = _block_markdown(b, body)
+            text, math_ratio = _block_markdown(b, body, encodings)
             if not text:
                 continue
             rec = {
@@ -473,6 +542,10 @@ def extract_pdf(path: str | Path, page_from: int | None = None,
             })
 
     paragraphs = _merge_cross_page(paragraphs)
+    # 再把"整段只剩 ⟦?⟧"的公式碎片并回上一条（必须放在跨页合并之后：
+    # 先处理页边界，碎片才不会被误当成跨页段的另一半）
+    paragraphs = _merge_glyph_fragments(paragraphs)
+    _recount_glyph_issues(paragraphs)
 
     title = ""
     for p in paragraphs:

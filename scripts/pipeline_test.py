@@ -31,6 +31,7 @@ sys.path.insert(0, str(ROOT))
 import app.translate as T  # noqa: E402
 from app import render, store  # noqa: E402
 from app.extract import extract_pdf  # noqa: E402
+from app.extract import _is_glyph_only_fragment, _merge_glyph_fragments  # noqa: E402
 from app import mathify as M  # noqa: E402
 from app.mock import MockClient  # noqa: E402
 from app.translate import _norm_ws  # noqa: E402
@@ -264,9 +265,55 @@ def main() -> None:
               isinstance(doc.get("glyph_issues"), int) and "glyph_issue_ids" in doc,
               f"glyph_issues={doc.get('glyph_issues')}")
 
+        # 实测发现：一条独立公式会被 PDF 拆成多块，其中一块的可见字符可能**只剩 ⟦?⟧**
+        # （大括号写成上下两截时就是这样，见用户论文 p0085/p0086）。这种碎片单独
+        # 存在毫无意义 —— 模型只能给出空括号。必须在抽取期并回上一条公式。
+        eq = {"id": "p1", "page": 9, "page_end": 9, "kind": "equation",
+              "text": "x$a$ ⟦?⟧⟦?⟧", "math_ratio": 0.9, "bbox": [368.9, 186.8, 400.3, 220.7]}
+        frag = {"id": "p2", "page": 9, "page_end": 9, "kind": "text",
+                "text": "⟦?⟧⟦?⟧", "math_ratio": 0.0, "bbox": [368.9, 204.4, 375.5, 220.7]}
+        outer = {"id": "p3", "page": 9, "page_end": 9, "kind": "text",
+                 "text": "⟦?⟧⟦?⟧", "math_ratio": 0.0, "bbox": [500.0, 500.0, 520.0, 520.0]}
+        check("纯占位符短段被识别为碎片", _is_glyph_only_fragment(frag))
+        check("含正文的段不算碎片", not _is_glyph_only_fragment(eq))
+        got = _merge_glyph_fragments([dict(eq), dict(frag)])
+        check("碎片被并回上一条公式", len(got) == 1 and got[0]["id"] == "p1", str([g["id"] for g in got]))
+        check("合并后占位符一个不丢",
+              got[0]["text"].count(M.MISSING_GLYPH) == 4, repr(got[0]["text"]))
+        check("记录合并来源便于排查", got[0].get("merged_fragments") == ["p2"])
+        # 版面无重叠、且上一条不是公式时不许乱并（防止把独立小段吃掉）
+        got2 = _merge_glyph_fragments([{"id": "t1", "page": 9, "page_end": 9, "kind": "text",
+                                        "text": "a normal sentence.", "math_ratio": 0.0,
+                                        "bbox": [10.0, 10.0, 200.0, 20.0]}, dict(outer)])
+        check("不该并的碎片不并（无重叠且非公式）", len(got2) == 2, str([g["id"] for g in got2]))
+
         # ------------------------------------------------------------ 13
-        print("\n== 13. 模型「用 ? 顶替占位符」的发现与重试 ==")
+        print("\n== 13. 模型「用 ? 或空括号顶替占位符」的发现与重试 ==")
         # 实测模型会把 ⟦?⟧ 改写成 ⟨?⟩ —— 看起来像修好了，其实是在藏问题。
+        # 更隐蔽的一种：被要求"不许出现问号"之后换成空括号 `\left[\;\right]`，
+        # 语法合法、渲染成一对空框，内容照样丢了。两者都必须被判为未修复。
+        check("`?` 顶替被判为未修复", bool(M.find_unrepaired(r"$\langle ? \rangle$")))
+        check("空括号被判为未修复",
+              bool(M.find_unrepaired(r"$$\left[\;\right]\left[\;\right]$$")),
+              "空括号是最容易被漏掉的一种「伪装修复」")
+        # 第三种伪装：一对空的矩阵单元格。被要求"不许空括号"之后模型就换这个。
+        check("空矩阵单元格被判为未修复",
+              bool(M.find_unrepaired(r"$$\left[\begin{matrix} \\ \end{matrix}\right]$$")))
+        check("空 array（带列格式）同样被判为未修复",
+              bool(M.find_unrepaired(r"$$\left[\begin{array}{c} \\ \end{array}\right]$$")))
+        check("正常公式不误报",
+              not M.find_unrepaired(r"$$\left[\begin{matrix}a \\ b\end{matrix}\right]$$")
+              and not M.find_unrepaired(r"$a + b = c$")
+              and not M.find_unrepaired(r"$$\|x\|_2^2$$")
+              and not M.find_unrepaired(r"$$\sum_{j=1}^{N} x_j^{(0)} \cdot T[j]$$"))
+        # 关键的反向保护：源文本里本来就没有占位符时，译文里的 `?` 是**原文自带**的
+        # （实测论文里有 `$?=$` 这种真问号），不能判成"模型藏了问题"，
+        # 否则这些段会被「修复公式段」按钮永久选中、反复重译。
+        check("源里无占位符时，原文自带的 ? 不算异常",
+              not M.find_unrepaired(r"$?=$", had_placeholder=False),
+              "误报会让按钮永远不收敛")
+        check("同一段若源里有占位符，则 ? 仍算异常",
+              bool(M.find_unrepaired(r"$?=$", had_placeholder=True)))
         # mock 刻意模仿这个行为：第一次给 ?，收到加强指令后才真正还原。
         probe = store.create_doc("占位符重试测试", PDF, "p.pdf")
         pdata = extract_pdf(PDF, 1, 1)
@@ -280,6 +327,9 @@ def main() -> None:
         blob = (rec.get("en") or "") + (rec.get("zh") or "")
         check("第一次被 ? 顶替 → 自动重试并修好", "?" not in blob and "⟦?⟧" not in blob,
               (rec.get("en") or "")[:80])
+        check("重试后给的是有内容的括号（不是空括号）",
+              not M.find_unrepaired(rec.get("en") or ""),
+              (rec.get("en") or "")[:80])
         check("修好后不标记为待确认", rec.get("unrepaired") is not True)
 
         client.MOCK_BAD_REPAIR = True
@@ -290,6 +340,42 @@ def main() -> None:
               f"unrepaired={rec2.get('unrepaired')} en={(rec2.get('en') or '')[:40]!r}")
         check("标记的段落仍保留模型输出（不丢译文）", bool(rec2.get("zh")))
         client.MOCK_BAD_REPAIR = False
+
+        # ------------------------------------------------------------ 14
+        print("\n== 14. 按字体字形名确定性还原大符号 ==")
+        # 坏掉的 ToUnicode 把 CMEX10 的字形变成控制字符/私有区，但字体自己的
+        # /Encoding 里有可读的 TeX 字形名。据此可以**不靠模型猜**就还原
+        # 大括号、求和号、大 ⊕（见 app/glyphnames.py）。
+        from app import glyphnames as G
+        check("能解析 Type1 的 /Encoding 表",
+              G._parse_encoding(
+                  b"/Encoding 256 array\n0 1 255 {1 index exch /.notdef put} for\n"
+                  b"dup 16 /parenleftBig put\ndup 77 /circleplusdisplay put\n"
+                  b"readonly def") == {16: "parenleftBig", 77: "circleplusdisplay"})
+        # 子集前缀必须规范化：字体表里是 VFYNJW+CMEX10，span 里常常只有 CMEX10
+        check("字体名去掉子集前缀", G._norm_font("VFYNJW+CMEX10") == "cmex10"
+              and G._norm_font("CMEX10") == "cmex10"
+              and G._norm_font("AB1234+CMEX10") == "cmex10")
+        encs = {"cmex10": {0x10: "parenleftBig", 0x11: "parenrightBig",
+                           0x4D: "circleplusdisplay", 0x50: "summationtext",
+                           0x32: "bracketlefttp"}}
+        rv = G.make_resolver("ABCDEF+CMEX10", encs)
+        check("大括号按字形名还原", rv("\x10") == r"\big(" and rv("\x11") == r"\big)")
+        check("大 ⊕ 按字形名还原", rv("M") == r"\bigoplus")
+        check("求和号按字形名还原", rv("P") == r"\sum")
+        # 关键的安全性：拼接片段（一个大 [ 被拆成上/中/下三块）故意不映射，
+        # 逐块映射会输出 `[[[`，比占位符更糟。
+        check("拼接片段不映射（否则会输出 [[[）", rv("\uf8ee") is None and rv("\x32") is None)
+        check("认不出的字符返回 None，交回原逻辑", rv("x") is None and rv("\u2200") is None)
+        check("非 CMEX 字体不参与解析",
+              G.make_resolver("ABCDEF+CMR10", {"cmr10": {0x10: "parenleftBig"}}) is None)
+        # 端到端：整篇抽取仍不许残留乱码码位（解析器不能把新字符漏进去）
+        doc2 = extract_pdf(PDF, 1, 2)
+        joined2 = "\n".join(p["text"] for p in doc2["paragraphs"])
+        bad2 = [c for c in joined2
+                if (ord(c) < 0x20 and c not in "\n\t") or 0xE000 <= ord(c) <= 0xF8FF
+                or ord(c) == 0xFFFD]
+        check("接上字形名解析后仍无残留乱码码位", not bad2, str(bad2[:6]))
     finally:
         # 注意：清理必须放 finally，而**测试节必须留在 try 里** ——
         # 第 12/13 节依赖 T.make_client 被替换成计数用 mock，一旦写到 finally

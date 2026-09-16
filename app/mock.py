@@ -24,6 +24,25 @@ MOCK_TAG = "〔模拟译文〕"
 MISSING_GLYPH = "⟦?⟧"
 
 
+def _fill_placeholder(text: str) -> str:
+    """把 ⟦?⟧ 还原成**带内容的**矩阵方括号。
+
+    用来模拟"模型真的读懂了上下文"的理想输出。关键是括号里必须有东西：
+    只给一对空括号（`\\left[\\;\\right]`）会被 `mathify.find_unrepaired` 判为未修复，
+    那正好是我们要测的反例。
+    """
+    parts = text.split(MISSING_GLYPH)
+    if len(parts) == 1:
+        return text
+    out = parts[0] + r"\left["
+    last = len(parts) - 1
+    for i, seg in enumerate(parts[1:], start=1):
+        out += seg
+        # 中间的空位视作矩阵换行，最后的空位补右括号
+        out += r"\right]" if i == last else r" \\ "
+    return out
+
+
 class MockClient:
     """接口与 DeepSeekClient 完全一致，便于无缝替换。
 
@@ -100,11 +119,12 @@ class MockClient:
             if MISSING_GLYPH in text:
                 strict = any("上一轮的问题" in (m.get("content") or "") for m in messages)
                 if self.MOCK_BAD_REPAIR or not strict:
-                    # 模仿真实模型的偷懒：把占位符换成 `?`
+                    # 模仿真实模型的偷懒：把占位符换成 `?`（第一次尝试）
                     fixed = text.replace(MISSING_GLYPH, r"\langle ? \rangle")
                 else:
-                    # 收到加强指令后给出真正的还原
-                    fixed = text.replace(MISSING_GLYPH, r"\left[\;\right]")
+                    # 收到加强指令后给出真正的还原：成对的占位符当矩阵方括号，
+                    # 且**括号里要有内容** —— 空括号会被 find_unrepaired 判为未修复。
+                    fixed = _fill_placeholder(text)
                 rec["en"] = fixed
                 rec["zh"] = MOCK_TAG + fixed      # 译文里同样不再出现占位符
             items.append(rec)

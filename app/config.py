@@ -10,6 +10,7 @@
 """
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import sys
@@ -53,14 +54,17 @@ DEFAULT_SYSTEM_PROMPT = r"""你是一位专业的学术论文翻译与排版专�
 - 分式被拉平（如 "c_x(X^n-1)(X-x)" 实为分数）；
 - \vec/\mathrm/\langle 等语义命令彻底消失（PDF 根本不存这些语义）；
 - **`⟦?⟧` 是"无法辨认的字形"占位符**：PDF 字体表坏了，抽出的是垃圾码位。
-  根据实测，`⟦?⟧` 几乎总是这几种东西：
-  · 大型括号（矩阵的 [ ]、向量的 ( )、集合的 { }、范数的 ‖ ‖、内积的 ⟨ ⟩），
-    而且常常成对出现在同一行两侧，或分别出现在上下两行（大括号被拆成上/下半截）；
-  · 分式的横线、根号、大运算符的上下限。
-  **必须结合上下文推断并补齐**：例如 `⟦?⟧Y ··· ⟦?⟧Y` 应还原为
-  `\begin{bmatrix} Y & \cdots & Y \end{bmatrix}`；
-  `⟦?⟧ ⟦?⟧ x_1 ... x_k` 应还原为 `\left(\begin{matrix} x_1 \\ \vdots \\ x_k \end{matrix}\right)`。
-  **绝不允许在输出里保留 `⟦?⟧`** —— 给出你最可能的推断即可。
+  据实测，`⟦?⟧` 来自两类字形，都出自 LaTeX 的大符号扩展字体（CMEX10）：
+  · **大型运算符**：`\sum`（最常见）、`\prod`、`\int` 以及它们的上下限；
+  · **大型定界符**：矩阵的 [ ]、向量的 ( )、集合的 { }、范数 ‖ ‖、内积 ⟨ ⟩、
+    分式横线；常成对出现在同一行两侧，或被拆到上下两行（大括号断成上下半截）。
+  **必须结合上下文推断并补齐**。特别地，**"整段只有 ⟦?⟧、几乎看不到别的字符"的
+  段落，几乎都是上一条公式被切断的碎片**（抽取器把一条公式拆成了好几段），
+  单看它无从判断，要连着相邻段落当成同一条公式去读；
+  同一行里成对出现的 `⟦?⟧…⟦?⟧`，中间夹着竖排元素时基本就是矩阵方括号：
+  · `⟦?⟧ Y ··· ⟦?⟧ Y`（Y 竖排）→ `\left[\begin{matrix} Y \\ \vdots \\ Y \end{matrix}\right]`。
+  **绝不允许在输出里保留 `⟦?⟧`；也不允许用 `?` 或一对空括号顶替** ——
+  那只是把问题藏起来。请给出你最可能的具体推断。
 请按数学含义把它们还原成标准、完整、可直接渲染的 LaTeX：
 - 行内公式用 $...$，独立公式用 $$...$$（该独立成行的就独立成行）；
 - 该用 \frac{}{}、\sum_{i=1}^{n}、\prod、\int、\langle \rangle、\vec{}、\mathrm{}、
@@ -106,19 +110,66 @@ DEFAULT_SETTINGS: dict[str, Any] = {
 }
 
 
+# 历代 DEFAULT_SYSTEM_PROMPT 的 sha1 指纹（按 strip 后计算）。
+# 用途见 _is_legacy_default_prompt：识别"设置里存的是旧版默认值"，好自动升级。
+#   8c63d3c8… 初版（775 字，没有任何 ⟦?⟧ 说明 —— 用户库里躺着的那份）
+#   c2f24ecd… 加了 ⟦?⟧ 说明，但例子有误导（把竖排矩阵写成横排）
+_LEGACY_PROMPT_SHA1 = frozenset({
+    "8c63d3c8dfd9fcae8d2f1c1c3fae18c7956061f3",
+    "c2f24ecdf345b1e9e2de23006dab41785b63df81",
+})
+
+
 def _is_legacy_default_prompt(p: str) -> bool:
     """判断保存下来的提示词是否只是"旧版默认值"。
 
     只有确认是历史默认值才替换成新版；用户自己改过的提示词一律不动。
+
+    为什么用 sha1 而不是"找某个关键词"：上一版就是这么写的，判据是
+    `"你是一位专业的学术论文翻译专家" in p`，而真正的旧默认写的是
+    "…翻译**与排版**专家" —— 子串对不上，于是这份旧提示词一直没被升级。
+    结果用户的设置里躺着初版提示词（**完全没有 ⟦?⟧ 的说明**），模型压根不知道
+    ⟦?⟧ 是什么，只能把它改写成 `?` 或空括号。指纹比对没有这个毛病。
+
+    维护约定：**每次改动 DEFAULT_SYSTEM_PROMPT，都把它上一版的 sha1 加进来**。
+    这样老用户升级后会自动换成新默认值，而不是卡在旧提示词上。
     """
-    return ("你是一位专业的学术论文翻译专家" in p) and ("任务 A" not in p)
+    if not p:
+        return False
+    return hashlib.sha1(p.strip().encode("utf-8")).hexdigest() in _LEGACY_PROMPT_SHA1
+
+
+_prompt_migration_done = False
+
+
+def _persist_prompt_migration(system_prompt: str, ask_prompt: str) -> None:
+    """把升级后的提示词写回 settings.json（每个进程最多一次）。
+
+    只动提示词字段，其余原样保留 —— 尤其 `api_key`，绝不能碰。
+    用"写临时文件 + 原子替换"避免写坏；失败就算了（内存里已是新提示词，
+    不影响使用，下次启动再试），绝不因为回写失败而影响正常读取。
+    """
+    global _prompt_migration_done
+    _prompt_migration_done = True
+    try:
+        disk: dict[str, Any] = {}
+        if SETTINGS_FILE.exists():
+            disk = json.loads(SETTINGS_FILE.read_text(encoding="utf-8"))
+        disk["system_prompt"] = system_prompt
+        if not (disk.get("ask_system_prompt") or "").strip():
+            disk["ask_system_prompt"] = ask_prompt
+        tmp = SETTINGS_FILE.parent / (SETTINGS_FILE.name + ".tmp")
+        tmp.write_text(json.dumps(disk, ensure_ascii=False, indent=2), encoding="utf-8")
+        os.replace(tmp, SETTINGS_FILE)
+    except Exception:  # noqa: BLE001
+        pass
 
 
 def load_settings() -> dict[str, Any]:
     """读取设置：默认值 <- settings.json <- 环境变量。
 
-    顺带做提示词迁移：空提示词、或仍是旧版默认值时，升级为当前默认值，
-    以免升级后用户卡在一份过时的提示词上。
+    顺带做提示词迁移：空提示词、或仍是旧版默认值时，升级为当前默认值并回写，
+    以免用户一直卡在一份过时的提示词上（历史教训见 _is_legacy_default_prompt）。
     """
     data = dict(DEFAULT_SETTINGS)
     if SETTINGS_FILE.exists():
@@ -128,10 +179,13 @@ def load_settings() -> dict[str, Any]:
             pass
 
     prompt = (data.get("system_prompt") or "").strip()
-    if not prompt or _is_legacy_default_prompt(prompt):
+    stale = (not prompt) or _is_legacy_default_prompt(prompt)
+    if stale:
         data["system_prompt"] = DEFAULT_SYSTEM_PROMPT
     if not (data.get("ask_system_prompt") or "").strip():
         data["ask_system_prompt"] = DEFAULT_ASK_PROMPT
+    if stale and not _prompt_migration_done and SETTINGS_FILE.exists():
+        _persist_prompt_migration(data["system_prompt"], data["ask_system_prompt"])
 
     # 环境变量：EE_* 为准；DEEPSEEK_API_KEY 是通用写法，一并支持
     for env, key in (("DEEPSEEK_API_KEY", "api_key"), ("EE_API_KEY", "api_key"),

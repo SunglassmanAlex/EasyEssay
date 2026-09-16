@@ -15,6 +15,8 @@ from __future__ import annotations
 import re
 import unicodedata
 
+from . import glyphnames
+
 # ------------------------------------------------------------------ 字体判定
 
 # LaTeX / OpenType 数学字体（真·数学字体）
@@ -95,21 +97,60 @@ def count_missing_glyphs(text: str) -> int:
 MATH_SPAN_RE = re.compile(r"\$\$(.+?)\$\$|\$(.+?)\$", re.S)
 # `?` 紧贴 LaTeX 命令的形态，例如 "\langle ? \rangle"、"\left[ ? \right]"
 _Q_NEAR_CMD_RE = re.compile(r"\\[A-Za-z]{2,}\s*\?|\?\s*\\[A-Za-z]{2,}")
+# 空的定界符对：`\left[\;\right]`、`\left(\right)`、`\langle\rangle` 之类。
+# 中间只允许空白与间距命令（`\,` `\;` `\quad`），所以不会误伤 `\left[x\right]`。
+_EMPTY_DELIM_RE = re.compile(
+    r"\\left\s*[\(\)\[\]\{\}\|\/](?:\s|~|\\[ ,;:!>]|\\q?quad|\\qquad)*\\right\s*[\(\)\[\]\{\}\|\/]"
+    r"|\\langle\s*\\rangle"
+    r"|\\lceil\s*\\rceil|\\lfloor\s*\\rfloor"
+)
+# 矩阵/对齐等"环境"：`\begin{matrix} \\ \end{matrix}` 这种单元格全空的情况，
+# 是模型在"不许用 ?、不许用空括号"之后找到的第三条退路，也得拦住。
+_ENV_RE = re.compile(
+    r"\\begin\{(matrix|bmatrix|pmatrix|vmatrix|Vmatrix|smallmatrix|array|cases|aligned)\}"
+    r"(.*?)\\end\{\1\}", re.S,
+)
+# 环境内部允许出现的纯排版成分：换行 \\、列分隔 &、间距命令（含 `\ ` 控制空格）、空白
+_ENV_EMPTY_RE = re.compile(r"\\\\|&|~|\s|\\[ ,;:!>]|\\q?quad|\\qquad|\\hspace\*?\{[^}]*\}")
 
 
-def find_unrepaired(text: str) -> list[str]:
+def _has_empty_env(body: str) -> bool:
+    """有没有"内容全空的矩阵/对齐环境"（例如 `\\begin{matrix} \\\\ \\end{matrix}`）。"""
+    for m in _ENV_RE.finditer(body):
+        inner = m.group(2)
+        if m.group(1) == "array":
+            inner = re.sub(r"^\s*\{[^}]*\}", "", inner)   # array 开头是列格式 {cc}
+        if not _ENV_EMPTY_RE.sub("", inner):
+            return True
+    return False
+
+
+def find_unrepaired(text: str, had_placeholder: bool = True) -> list[str]:
     r"""检查（模型输出的）文本里是否还有没修好的公式，返回原因列表。
 
-    两种情况都算没修好：
+    三种情况都算没修好：
     1. 占位符原样留着 —— 模型直接照抄了；
     2. **用 `?` 顶替占位符** —— 实测模型会这么干（`⟦?⟧⟦?⟧` → `\langle ? \rangle`）。
        这比留着占位符更糟：把问题伪装成"看起来像公式"的东西，而且我的检测器
        再也找不到它。所以数学片段里出现 `?` 一律视为未修复。
+    3. **用空定界符顶替** —— 同一批实测里，被要求"不许出现问号"之后，模型换了个
+       更隐蔽的做法：`⟦?⟧⟦?⟧` → `\left[\;\right]\left[\;\right]`。语法上完全合法、
+       渲染出来是一对空括号，看上去"干净"了，内容却还是丢了。空定界符在
+       重建乱码的语境下几乎必然意味着内容缺失，所以同样判为未修复。
+       继续加码要求后，模型又给出了第三条退路：`\left[\begin{matrix} \\ \end{matrix}\right]`
+       —— 一对空矩阵单元格。同属一类，一并拦住。
+
+    参数 `had_placeholder`：该段**源文本**里是否含 ⟦?⟧。第 2、3 条只在源里有占位符
+    时才有意义 —— 源里没有占位符，说明 `?` 或空括号是**原文本来就有**的
+    （例如 `$?=$`、原文里真的有对空括号），那是正常的，不该判成"模型藏了问题"。
+    第 1 条不受此限：占位符出现在输出里，无论源如何都是没处理干净。
     """
     reasons: list[str] = []
     body = text or ""
     if MISSING_GLYPH in body:
         reasons.append("占位符残留")
+    if not had_placeholder:
+        return reasons
     # 情况 2a：`?` 落在 $...$ 数学片段里
     for m in MATH_SPAN_RE.finditer(body):
         if "?" in m.group(0):
@@ -120,6 +161,10 @@ def find_unrepaired(text: str) -> list[str]:
         # 模型经常不写 $ 定界符，只按 2a 判断会漏掉这类"伪装成公式"的输出。
         if _Q_NEAR_CMD_RE.search(body):
             reasons.append("用 ? 顶替了无法辨认的字形")
+    if _EMPTY_DELIM_RE.search(body):
+        reasons.append("用空括号顶替了无法辨认的字形")
+    if _has_empty_env(body):
+        reasons.append("用空矩阵单元格顶替了无法辨认的字形")
     return reasons
 
 
@@ -368,8 +413,12 @@ def cleanup_latex(latex: str) -> str:
     return s
 
 
-def text_to_latex(text: str) -> str:
-    """一段已知为数学的文本 -> LaTeX 片段（保留必要空格，其余交给 MathJax）。"""
+def text_to_latex(text: str, resolver=None) -> str:
+    """一段已知为数学的文本 -> LaTeX 片段（保留必要空格，其余交给 MathJax）。
+
+    `resolver` 是可选回调：先问它 `ch -> LaTeX`，命中就用（用于按 PDF 字体的
+    字形名确定性还原大括号/求和号等，见 app/glyphnames.py），未命中走原逻辑。
+    """
     text = normalize_combining(text)
     out: list[str] = []
     for ch in text:
@@ -379,13 +428,17 @@ def text_to_latex(text: str) -> str:
             if out and not out[-1].endswith((" ", "\x00")):
                 out.append(" ")
             continue
+        hit = resolver(ch) if resolver else None
+        if hit is not None:
+            out.append(hit + "\x00")   # 同样加哨兵，避免与后一个命令粘在一起
+            continue
         out.append(char_to_latex(ch))
     res = "".join(out)
     res = re.sub(r"[ \t]{2,}", " ", res)
     return res.strip()   # 结尾的 \\x00 哨兵保留，等整段合并完成后再换空格
 
 
-def plain_text_escape(text: str) -> str:
+def plain_text_escape(text: str, resolver=None) -> str:
     """非数学文本：转义会干扰 Markdown / MathJax 的字符。
 
     注意这里也处理不可渲染码位 —— 早期版本只处理了数学片段，正文里的
@@ -393,8 +446,12 @@ def plain_text_escape(text: str) -> str:
     """
     out = []
     for i, ch in enumerate(text):
-        if is_unrenderable(ch):
+        hit = resolver(ch) if resolver else None
+        if hit is None and is_unrenderable(ch):
             out.append(MISSING_GLYPH)
+            continue
+        if hit is not None:
+            out.append(hit)
             continue
         if ch == "\\":
             out.append("∕")
@@ -430,8 +487,13 @@ def _span_kind(font: str, text: str, strong: bool, promote: bool) -> str:
     return "math" if math_char_ratio(stripped) >= 0.5 else "text"
 
 
-def spans_to_markdown(spans: list[dict], base_size: float | None = None) -> str:
-    """把一行的 span 列表拼成带 $...$ 的文本，自动还原上下标。"""
+def spans_to_markdown(spans: list[dict], base_size: float | None = None,
+                      encodings: dict | None = None) -> str:
+    """把一行的 span 列表拼成带 $...$ 的文本，自动还原上下标。
+
+    `encodings` 是 {字体名: {码位: 字形名}}（见 app/glyphnames.py）。给了它就能
+    先把"PDF 字体表坏掉"的大符号按字形名确定性还原，剩下的才留 ⟦?⟧ 交给模型。
+    """
     spans = [s for s in spans if s.get("text")]
     if not spans:
         return ""
@@ -461,6 +523,13 @@ def spans_to_markdown(spans: list[dict], base_size: float | None = None) -> str:
             if items and prev_x1 is not None:
                 items[-1]["prefix_space"] = True
             continue
+        # 先按字形名把可确定性还原的大符号认出来（⟦?⟧ 只留真正无法确定的）。
+        # 注意不能在这里替换字符串 —— 换出来的 `\big(` 会被下面的转义逻辑当成
+        # 反斜杠字符再转义一次。正确做法是把 resolver 传进转换函数逐字调用。
+        resolver = glyphnames.make_resolver(s.get("font", ""), encodings) if encodings else None
+        if resolver is not None and any(
+                resolver(c) is not None for c in raw):
+            strong = True          # 本片段里有能确定性还原的大符号 -> 按数学处理
         size = float(s.get("size", dom))
         x0, _y0, x1, _y1 = s.get("bbox", (0.0, 0.0, 0.0, 0.0))
         oy = s.get("origin", (x0, 0.0))[1]
@@ -480,15 +549,17 @@ def spans_to_markdown(spans: list[dict], base_size: float | None = None) -> str:
             prefix_space = True
 
         if sup or sub:
-            frag = text_to_latex(raw)
+            frag = text_to_latex(raw, resolver)
             if not frag:
                 continue
             kind = "math"
         elif kind == "math":
-            frag = text_to_latex(raw)
+            frag = text_to_latex(raw, resolver)
             if not frag:
                 continue
         else:
+            # strong=True 时 _span_kind 一定返回 "math"，走不到这里；
+            # 所以这里不需要转义，保持与旧行为一致。
             frag = raw
 
         items.append({"kind": kind, "text": frag, "sup": sup, "sub": sub,

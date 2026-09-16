@@ -17,7 +17,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
-from . import maintain, ocr, render, store, translate
+from . import maintain, mathify, ocr, render, store, translate
 from .config import (DEFAULT_ASK_PROMPT, DEFAULT_SYSTEM_PROMPT, UPLOAD_DIR, WEB_DIR,
                      load_settings, public_settings, save_settings)
 from .deepseek import DeepSeekError, make_client
@@ -136,8 +136,29 @@ def api_get_doc(doc_id: str, with_text: bool = True) -> dict:
     out: dict[str, Any] = {"meta": meta}
     if with_text:
         extracted = store.load_extracted(doc_id)
-        out["paragraphs"] = extracted.get("paragraphs", [])
-        out["translations"] = store.load_translations(doc_id)
+        paragraphs = extracted.get("paragraphs", [])
+        translations = store.load_translations(doc_id)
+        # 实时判断"哪些段还没修好"，而不是只信落盘的 `unrepaired` 字段：
+        # 检测规则是逐步完善起来的（先有占位符残留，后来才补上"用 ? 顶替"、
+        # "用空括号顶替"），所以**旧数据**里可能藏着按当时的规则查不出的坏段。
+        # 每次读取都重算一遍，这些段才会浮出来给「修复公式段」按钮。
+        #
+        # 只看**译文**，不看抽取文本：抽取里留着 ⟦?⟧ 并不等于没修好 —— 模型完全可以
+        # 正确还原它。若把"抽取含占位符"也算进来，那些已经修好的段会被永久选中，
+        # 按钮点一次重译一次、数字永不归零。只认译文里残留的问题，按钮才会收敛。
+        broken: list[str] = []
+        for p in paragraphs:
+            rec = translations.get(p.get("id")) or {}
+            if not rec:
+                continue          # 还没翻译的段归「继续翻译」，不归「修复」
+            if mathify.find_unrepaired(
+                    (rec.get("en") or "") + (rec.get("zh") or ""),
+                    # 源里没有占位符的段，译文里的 `?` 是原文自带的，不算"模型藏了问题"
+                    had_placeholder=mathify.MISSING_GLYPH in (p.get("text") or "")):
+                broken.append(p.get("id"))
+        out["paragraphs"] = paragraphs
+        out["translations"] = translations
+        out["needs_repair"] = broken
         out["page_count"] = extracted.get("page_count")
         out["ocr_pages"] = extracted.get("ocr_pages", [])
     out["running"] = doc_id in TASKS

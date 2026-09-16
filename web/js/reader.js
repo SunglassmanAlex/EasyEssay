@@ -21,14 +21,17 @@
     $('progress-bar').style.width = Math.round((p || 0) * 100) + '%';
   }
 
-  // 找出"含无法辨认字形（⟦?⟧）"的段落：这些段的公式必然有缺，需要让模型按上下文还原
-  function glyphBadIds(paragraphs) {
-    return paragraphs.filter(function (p) {
-      return p.glyph_issues || (p.text || '').indexOf('⟦?⟧') >= 0;
-    }).map(function (p) { return p.id; });
+  // 找出"还没修好"的段落：译文里残留 ⟦?⟧、`?`，或者模型当初只给了一对空括号。
+  // 后端每次读文档都会重算一份（见 /api/docs/{id} 的 needs_repair），这里直接用。
+  //
+  // 注意**不能**退回"抽取文本含 ⟦?⟧ 就算没修好"：占位符留在抽取文本里很正常，
+  // 模型完全可以正确还原它。那样判的话，已经修好的段会被永久选中，按钮点一次
+  // 重译一次、数字永远不归零。
+  function glyphBadIds(paragraphs, needsRepair) {
+    return Array.isArray(needsRepair) ? needsRepair.slice() : [];
   }
 
-  function render(meta, paragraphs, translations, running) {
+  function render(meta, paragraphs, translations, running, needsRepair) {
     var stats = meta.stats || {};
     document.title = (meta.title || 'EasyEssay') + ' · 中英对照';
     $('doc-title').textContent = meta.title || docId;
@@ -74,14 +77,14 @@
       }
     });
 
-    var badIds = glyphBadIds(paragraphs);
+    var badIds = glyphBadIds(paragraphs, needsRepair);
     repairIds = badIds;
     var btnRepair = $('btn-repair');
     if (badIds.length) {
       btnRepair.hidden = false;
-      btnRepair.textContent = '修复乱码段（' + badIds.length + '）';
-      btnRepair.title = '这 ' + badIds.length + ' 段里有 PDF 无法辨认的字形（⟦?⟧，多为矩阵/大括号），'
-        + '点一下只重译这些段，让模型按上下文还原公式；其它段不动';
+      btnRepair.textContent = '修复公式段（' + badIds.length + '）';
+      btnRepair.title = '这 ' + badIds.length + ' 段里，公式有 PDF 无法辨认的字形（⟦?⟧，多为矩阵/大括号），'
+        + '或模型当初只给了个空括号顶替。点一下只重译这些段，让模型按上下文还原公式；其它段不动';
     } else {
       btnRepair.hidden = true;
     }
@@ -138,7 +141,7 @@
       lastTranslated = n;
       lastBuilt = nBuilt;
       if (needRender) {
-        render(meta, d.paragraphs || [], translations, d.running);
+        render(meta, d.paragraphs || [], translations, d.running, d.needs_repair || []);
         if (keepScroll) window.scrollTo({ top: y });
       } else {
         $('doc-note').textContent = [

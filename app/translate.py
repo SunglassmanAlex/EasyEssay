@@ -30,17 +30,30 @@ OUTPUT_SPEC = r"""
 - 若该段是纯公式（$$...$$），en 与 zh 都原样返回该公式，不要添加解释；
 - terms 只列该段的关键术语（最多 4 个，en/zh 对应），没有则给空数组 []。"""
 
-# 模型把占位符改写成 `?` 时，用于第二次尝试的加强指令
+# 模型把占位符改写成 `?`（或空括号）时，用于第二次尝试的加强指令
 STRICT_REPAIR_HINT = r"""
 
-【重要·上一轮的问题】你把无法辨认的字形占位符 ⟦?⟧ 改写成了 `?`，这不行：
-`?` 不是公式的一部分，看起来像"修好了"其实是在藏问题。这次请务必：
+【重要·上一轮的问题】你对无法辨认的字形占位符 ⟦?⟧ 的处理不合格 —— 要么改写成了 `?`，
+要么换成了 `\left[\;\right]` 这种**空括号**。两者都是把问题藏起来：
+`?` 不是公式的一部分；空括号虽然语法合法，但渲染出来是一对空框，内容照样丢了。
+这次请务必：
 - 不要出现任何 `?`；
-- 结合上下文给出**最可能的字面推断**。按实测统计，⟦?⟧ 绝大多数是：
-  矩阵/向量的括号 `[ ]`、`( )`（例如竖排向量用 \left(\begin{matrix}…\end{matrix}\right)），
-  集合的花括号 `{ }`，范数 `\| \|`，内积/期望的 `\langle \rangle`，或分式横线。
-  同一行成对出现的两个 ⟦?⟧ 基本就是矩阵方括号；
-- 实在无法确定时，选择上下文里最常用的那一种即可，但**不要留 `?`、不要留 ⟦?⟧**。"""
+- 不要给出任何空的定界符（`\left[\right]`、`\left(\right)`、`\langle\rangle` 一律不行），
+  定界符里面**必须有内容**；
+- **重点看前后相邻段落**：这次给你的不止目标段，还有它的上下文。论文里常有一条公式
+  被抽取切成好几段的情况，某一段的可见字符可能只剩下括号或运算符，单看它必然无从
+  判断 —— 它的真实含义在相邻的段落里。请把相邻段落当作同一条公式的一部分来理解。
+- 结合上下文给出**最可能的字面推断**。按实测统计，⟦?⟧ 来自两类字形：
+  ① **大型运算符**（`\sum`、`\prod`、`\int` 及其上下限）—— 注意不少"整段只有
+     ⟦?⟧⟦?⟧"的碎片，其实是求和号加上它的上下限，或者是矩阵的左右括号；
+  ② **定界符**：矩阵/向量的 `[ ]`、`( )`（竖排用
+     `\left[\begin{matrix}a \\ b\end{matrix}\right]`）、集合的 `\{ \}`、
+     范数 `\| \|`、内积/期望的 `\langle \rangle`，或分式横线。
+  同一行成对出现的两个 ⟦?⟧ 基本就是矩阵方括号，而夹在 ⟦?⟧…⟦?⟧ 之间被竖排的
+  那一串元素，正是要放进 `\begin{matrix}…\end{matrix}` 里的内容；
+- 实在无法确定时，选择上下文里最常用的那一种，但**不要留 `?`、不要留 ⟦?⟧、
+  不要留空括号**。
+"""
 
 
 # 关闭「原文重建」时的输出协议（只翻译）
@@ -144,9 +157,27 @@ def _norm_item(item: dict) -> tuple[str, str, list[dict], str]:
     return pid, str(zh).strip(), clean_terms, str(en).strip()
 
 
+def _context_window(pool: list[dict], pid: str, radius: int = 1) -> list[dict]:
+    """取出 pid 及前后各 radius 段，作严格重试时的参考上下文。
+
+    为什么需要：论文里真有"整段就剩两个 ⟦?⟧"的公式碎片（抽取把一条公式切成了
+    好几段，其中一段的可见字符只有括号/运算符）。这种段单独发给模型，它手里
+    没有任何线索，只能瞎猜 —— 实测结果是给一对空括号敷衍过去。把前后段落一并
+    带上，模型才能看出"这两个占位符是上一条公式的矩阵括号"之类的事实。
+    """
+    for i, p in enumerate(pool):
+        if p.get("id") == pid:
+            return pool[max(0, i - radius): i + radius + 1]
+    return [p for p in pool if p.get("id") == pid]
+
+
 def _translate_batch(client: DeepSeekClient, batch: list[dict], settings: dict,
-                     glossary: list[list[str]]) -> tuple[dict, list[dict]]:
-    """翻译一批，返回 ({id: {"zh":..,"terms":..,"en":..}}, 新术语)。失败自动二分。"""
+                     glossary: list[list[str]],
+                     ctx: list[dict] | None = None) -> tuple[dict, list[dict]]:
+    """翻译一批，返回 ({id: {"zh":..,"terms":..,"en":..}}, 新术语)。失败自动二分。
+
+    `ctx` 是"整篇段落"的参考池，仅用于严格重试时取邻居当上下文；不给就和 batch 等价。
+    """
     if not batch:
         return {}, []
     restore = bool(settings.get("restore_original", True))
@@ -188,13 +219,19 @@ def _translate_batch(client: DeepSeekClient, batch: list[dict], settings: dict,
         out[pid] = rec
         new_terms.extend(terms)
 
-    # 校验：模型有没有用 `?` 顶替占位符、或干脆照抄占位符
+    # 校验：模型有没有用 `?` / 空括号顶替占位符，或干脆照抄占位符
     #
     # 注意 `_no_repair_retry`：重试时的子调用必须跳过这段校验，否则单段重试会
     # 再次触发"校验→重试→校验"，模型永远修不好时就会无限递归（第一版就是这么挂的）。
     if not settings.get("_no_repair_retry"):
-        bad = [pid for pid, rec in out.items()
-               if mathify.find_unrepaired((rec.get("en") or "") + (rec.get("zh") or ""))]
+        def _bad(rec: dict[str, Any], src: str) -> list[str]:
+            return mathify.find_unrepaired(
+                (rec.get("en") or "") + (rec.get("zh") or ""),
+                # 源文本里没有占位符的段，输出里的 `?` 是原文自带的，不该算异常
+                had_placeholder=mathify.MISSING_GLYPH in src)
+
+        src_of = {p["id"]: (p.get("text") or "") for p in batch}
+        bad = [pid for pid, rec in out.items() if _bad(rec, src_of.get(pid, ""))]
         for pid in bad:
             para = next((p for p in batch if p["id"] == pid), None)
             if not para:
@@ -203,9 +240,10 @@ def _translate_batch(client: DeepSeekClient, batch: list[dict], settings: dict,
                 strict = dict(settings)
                 strict["_no_repair_retry"] = True
                 strict["system_prompt"] = (settings.get("system_prompt", "") or "") + STRICT_REPAIR_HINT
-                sub, _t = _translate_batch(client, [para], strict, glossary)
-                if sub and not mathify.find_unrepaired(
-                        (sub[pid].get("en") or "") + (sub[pid].get("zh") or "")):
+                # 带上前后邻居：只有 ⟦?⟧ 的公式碎片必须靠上下文才可能还原
+                sub, _t = _translate_batch(client, _context_window(ctx or batch, pid),
+                                           strict, glossary, ctx=ctx)
+                if sub and pid in sub and not _bad(sub[pid], para.get("text") or ""):
                     out[pid] = sub[pid]
                     continue
             except DeepSeekError:
@@ -301,7 +339,7 @@ def translate_document(
                                            "message": "已手动停止"})
                 break
             try:
-                mapping, terms = _translate_batch(client, batch, st, glossary)
+                mapping, terms = _translate_batch(client, batch, st, glossary, ctx=paras)
                 _update_glossary(glossary, terms)
                 store.merge_translations(doc_id, mapping)
                 completed += len(mapping)
