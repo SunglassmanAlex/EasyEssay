@@ -199,7 +199,12 @@ class MockClient:
                 terms.append({"en": w, "zh": zh})
             rec = {
                 "id": p.get("id"),
-                "zh": MOCK_TAG + text,
+                # ⚠️ 要把术语**真的写进译文**：前端只在"译文里出现该术语"时才标它。
+                # 早先这里只给原文加个前缀，于是术语一个也标不出来 ——
+                # 测试因此误判成"术语高亮没生效"（踩过）。
+                "zh": MOCK_TAG + text + (
+                    "（术语：" + "、".join(t["zh"] for t in terms) + "）" if terms else ""
+                ),
                 "terms": terms,
             }
             if want_rebuilt:

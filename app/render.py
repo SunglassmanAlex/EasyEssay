@@ -60,6 +60,10 @@ def build_standalone_html(doc: dict, api_base: str = "http://127.0.0.1:8765",
         "title": title,
         "paragraphs": doc.get("paragraphs", []),
         "translations": doc.get("translations", {}),
+        # 全局术语表：**术语高亮的唯一真源**（规格 §7）。
+        # 用每段自己的 terms 会命中一堆变体、标得满篇都是；
+        # 术语表是去重后的权威译法，标它才对得上"20–30 页约 100–150 处"的密度。
+        "glossary": doc.get("glossary") or [],
         "meta": {
             "source_name": meta.get("source_name", ""),
             "page_count": meta.get("page_count", ""),

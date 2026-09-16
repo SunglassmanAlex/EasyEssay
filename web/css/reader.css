@@ -321,6 +321,23 @@ blockquote {
 /* 表格：左右各完整一份，数值 / 行序 / 列义与原文一致 */
 .tblbox { overflow-x: auto; }
 
+/* 列数多的表（≥8 列）用小一号字 —— 半栏宽度里塞 10+ 列，
+   用正文字号必然横向溢出（规格 §11）。列数由渲染时写进 data-cols。 */
+.tblbox table[data-cols="8"], .tblbox table[data-cols="9"],
+.tblbox table[data-cols="10"], .tblbox table[data-cols="11"],
+.tblbox table[data-cols="12"], .tblbox table[data-cols="13"],
+.tblbox table[data-cols="14"], .tblbox table[data-cols="15"],
+.tblbox table[data-cols="16"] { font-size: 11px; }
+.tblbox table[data-cols="8"] th, .tblbox table[data-cols="8"] td,
+.tblbox table[data-cols="9"] th, .tblbox table[data-cols="9"] td,
+.tblbox table[data-cols="10"] th, .tblbox table[data-cols="10"] td,
+.tblbox table[data-cols="11"] th, .tblbox table[data-cols="11"] td,
+.tblbox table[data-cols="12"] th, .tblbox table[data-cols="12"] td,
+.tblbox table[data-cols="13"] th, .tblbox table[data-cols="13"] td,
+.tblbox table[data-cols="14"] th, .tblbox table[data-cols="14"] td,
+.tblbox table[data-cols="15"] th, .tblbox table[data-cols="15"] td,
+.tblbox table[data-cols="16"] th, .tblbox table[data-cols="16"] td { padding: 2px 3px; }
+
 /* 伪代码 / 算法块：按行渲染，保留行号与缩进。
    字体**必须显式指定 Consolas 优先**：`ui-monospace` 在 Windows 上映射不到
    等宽字体，会落到一个很丑的默认字体（用户实测反馈"太难看了"）。

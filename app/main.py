@@ -158,6 +158,8 @@ def api_get_doc(doc_id: str, with_text: bool = True) -> dict:
                 broken.append(p.get("id"))
         out["paragraphs"] = paragraphs
         out["translations"] = translations
+        # 全局术语表：应用内阅读的术语高亮也用它（与导出同一份真源）
+        out["glossary"] = store.load_glossary(doc_id)
         out["needs_repair"] = broken
         out["page_count"] = extracted.get("page_count")
         out["ocr_pages"] = extracted.get("ocr_pages", [])
@@ -434,6 +436,8 @@ def api_export(doc_id: str, download: bool = True) -> Any:
         "title": meta.get("title"),
         "paragraphs": extracted.get("paragraphs", []),
         "translations": store.load_translations(doc_id),
+        # 全局术语表：术语高亮的唯一真源（没有它前端会退回逐段 terms，标得满页都是）
+        "glossary": store.load_glossary(doc_id),
         "meta": meta,
     }
     # 内联 MathJax：用户"导出后只拿到一个 HTML"是常态，而默认写法要 ./vendor/mathjax/

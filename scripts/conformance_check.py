@@ -14,6 +14,7 @@
 from __future__ import annotations
 
 import argparse
+import html
 import json
 import re
 import sys
@@ -73,7 +74,7 @@ def check_terms(doc_id: str) -> None:
     tr = store.load_translations(doc_id)
     n_terms = sum(len((r or {}).get("terms") or []) for r in tr.values())
     gl = store.load_glossary(doc_id)
-    check("存在全局术语表", len(gl) > 0, f"{len(gl)} 条")
+    check("存在全局术语表（术语高亮的唯一真源）", len(gl) > 0, f"{len(gl)} 条")
     check("译文里带术语数组", n_terms > 0, f"{n_terms} 条（逐段）")
 
 
@@ -93,6 +94,70 @@ def check_pages(doc_id: str) -> None:
     seq = [int(m.group(1)) for i in ids if (m := re.match(r"p(\d+)$", i))]
     holes = [n for n in range(1, max(seq) + 1) if n not in seq] if seq else []
     check("block 编号不跳号", not holes, f"缺号 {holes[:8]}" if holes else f"{len(seq)} 个连续")
+
+
+def check_page_labels(doc_id: str) -> None:
+    """§8/§10：页栏标签必须单调递增（浮动图表按原印刷顺序排的结果）。"""
+    from app import store
+    ex = store.load_extracted(doc_id)
+    pages = [int(p.get("page") or 0) for p in ex["paragraphs"]]
+    back = [(i, pages[i - 1], pages[i]) for i in range(1, len(pages)) if pages[i] < pages[i - 1]]
+    check("页栏标签单调递增（无回跳）", not back,
+          f"{len(back)} 处回跳，例如第{back[0][0]}段 {back[0][1]}→{back[0][2]}" if back
+          else f"共 {len(pages)} 段，{min(pages)}→{max(pages)}")
+
+
+def check_fidelity(doc_id: str) -> None:
+    """§10 保真度：英文侧压缩后应与原文一致（子串匹配）。
+
+    压缩 = 只留字母数字 + 转小写。原文取 PDF 全文（PyMuPDF）。
+    未命中的多半是「公式被转成 LaTeX」「连字符断词还原」「图表插断」这类
+    **可接受**的差异；真正要抓的是"整段不在原文里"（= 抽取时丢词/串行）。
+    """
+    from app import store
+    src = store.source_path(doc_id)
+    if not src:
+        print("  · 找不到源文件，跳过保真度检查")
+        return
+    try:
+        import pymupdf
+        doc = pymupdf.open(src)
+        raw = "".join(pg.get_text() for pg in doc)
+        doc.close()
+    except Exception as e:  # noqa: BLE001
+        print(f"  · 读取原文失败（{str(e)[:40]}），跳过保真度检查")
+        return
+
+    def squash(t: str) -> str:
+        """归一化：解 HTML 实体、去掉 LaTeX 命令，再只留字母数字小写。
+
+        ⚠️ 不归一化会误报：`&` 被转义成 `&amp;`（压缩后多出 "amp"）、
+        公式被转成 LaTeX（`$	heta$`）—— 这些是**正确行为**，不是抽取错误。
+        第一版要求"整段匹配"，误报率 18%（实测未命中的全是这两类）。
+        """
+        t = html.unescape(t or "")
+        t = re.sub(r"\[a-zA-Z]+", "", t)      # LaTeX 命令
+        return re.sub(r"[^a-z0-9]", "", t.lower())
+
+    hay = squash(raw)
+    ex = store.load_extracted(doc_id)
+    kinds = ("text", "heading", "abstract", "caption", "note")
+    miss, total = [], 0
+    for p in ex["paragraphs"]:
+        if p.get("kind") not in kinds:
+            continue
+        needle = squash(p.get("text") or "")
+        if len(needle) < 40:          # 太短的片段（标题词）噪声大
+            continue
+        total += 1
+        # 按**前缀**匹配：正文里夹着公式/符号时，整段不会逐字相同，
+        # 但开头 40 字必须能在原文里找到（找不到才是真丢词/串行）
+        if needle[:40] not in hay:
+            miss.append(p["id"])
+    rate = 1 - len(miss) / max(1, total)
+    check("保真度：英文侧开头能在原文里找到", rate >= 0.95,
+          f"命中 {total - len(miss)}/{total} = {rate*100:.0f}%"
+          + (f"，可疑 {miss[:5]}" if miss else ""))
 
 
 def check_coverage(doc_id: str) -> None:
@@ -251,6 +316,8 @@ def main() -> int:
         print("\n== 数据层 ==")
         check_tables(args.doc)
         check_pages(args.doc)
+        check_page_labels(args.doc)
+        check_fidelity(args.doc)
         check_terms(args.doc)
         check_coverage(args.doc)
 

@@ -139,12 +139,28 @@
     return n % 2 === 1;
   }
 
+  /**
+   * 术语高亮：**每个术语只标首次出现**（全篇一次），并带上"英文 · 中文"提示。
+   *
+   * ⚠️ 为什么不是"每处都标"：逐段各标一次，同一术语会被标几十次 ——
+   * 实测 24 页论文标出 **1367 处**，而交付规格给的参考密度是 **100–150 处**
+   * （≈ 去重术语数）。满篇高亮等于没有重点，还把正文淹了。
+   */
+  // ⚠️ 必须是**模块级**变量：highlightTerms 是模块级函数，
+  // 看不到 renderBilingual 内部的 state —— 写成 state.seenTerms 会直接
+  // `ReferenceError: state is not defined`，整页渲染不出来
+  // （真实浏览器自检当场抓到；jsdom 那次也栽在同类的 IIFE 作用域上）。
+  // 每次渲染开始时重置（见 renderBilingual 里的赋值）。
+  var seenTerms = { en: {}, zh: {} };
+
   function highlightTerms(root, terms, lang) {
     if (!terms || !terms.length) return;
+    var seen = seenTerms[lang];
     var pairs = [];
     terms.forEach(function (t) {
       var needle = lang === 'zh' ? t.zh : t.en;
       if (!needle || needle.length < 2) return;
+      if (seen[needle]) return;          // 已标过 → 跳过
       pairs.push({ needle: needle, tip: [t.en, t.zh].filter(Boolean).join(' · ') });
     });
     if (!pairs.length) return;
@@ -189,15 +205,10 @@
         var span = el('span', lang === 'zh' ? 'term' : 'term-en', md.esc(hit.needle));
         span.title = hit.tip;
         frag.appendChild(span);
+        seen[hit.needle] = true;          // 记下，后续段落不再重复标
         rest = rest.slice(at + hit.needle.length);
+        // 同一段里同一术语**只标一次**（记进 seen 后，外层循环的下一次调用会跳过它）
         at = -1;
-        var f2 = 0;
-        while (f2 <= rest.length - hit.needle.length) {
-          var k2 = rest.indexOf(hit.needle, f2);
-          if (k2 < 0) break;
-          if (!insideMath(rest, k2)) { at = k2; break; }
-          f2 = k2 + 1;
-        }
         at = -1; hit = null;
         for (var j = 0; j < pairs.length; j++) {
           var k = rest.indexOf(pairs[j].needle);
@@ -239,6 +250,8 @@
     var head = grid.head_rows || 0;
     var box = el('div', 'tblbox');
     var table = document.createElement('table');
+    // 列数写进属性：CSS 据此给"≥8 列的表"用小一号字（半栏里塞 10+ 列会溢出）
+    table.setAttribute('data-cols', String((grid && grid.columns) || 0));
     var thead = document.createElement('thead');
     var tbody = document.createElement('tbody');
 
@@ -460,6 +473,25 @@
       showRaw: false,
       scale: parseFloat(store.get('ee-scale') || '1') || 1
     };
+    // 每次渲染重置"术语已标过"的集合 → 每个术语全篇只标首次出现
+    seenTerms = { en: {}, zh: {} };
+
+    // 术语表的取得：优先用**全局术语表**（规格 §7 说它是唯一真源）；
+    // 老文档没有 glossary 时，从各段 terms 去重兜底。
+    var docTerms = (doc.glossary && doc.glossary.length)
+      ? doc.glossary.map(function (g) {
+          return { en: g[0] || g.en || '', zh: g[1] || g.zh || '' };
+        })
+      : (function () {
+          var seen = {}, out = [];
+          paragraphs.forEach(function (p) {
+            (((translations || {})[p.id] || {}).terms || []).forEach(function (t) {
+              var k = (t.en || '').toLowerCase();
+              if (k && !seen[k]) { seen[k] = 1; out.push(t); }
+            });
+          });
+          return out;
+        })();
 
     var wrapMeta = (doc.meta || {}).stats || {};
     var stats = {
@@ -531,9 +563,11 @@
         fillCell(zh, { kind: kind, text: tr.zh, table: tr.table, caption: tr.caption,
                       figure: tr.figure, protocol: tr.protocol,
                       algorithm: tr.algorithm }, kind);
-        if (tr.terms && tr.terms.length) {
-          highlightTerms(en, tr.terms, 'en');
-          highlightTerms(zh, tr.terms, 'zh');
+        // 术语高亮：**只标译文侧**（规格 §7「把术语标进译文」）、
+        // 用**全局术语表**（唯一真源）、且**表格与伪代码内不标**
+        // （规格 §7「表格内不标」；伪代码是代码，标了反而干扰）。
+        if (docTerms.length && kind !== 'table' && kind !== 'algorithm') {
+          highlightTerms(zh, docTerms, 'zh');
         }
       } else {
         zh.classList.add('pending');

@@ -636,17 +636,28 @@ def extract_pdf(path: str | Path, page_from: int | None = None,
                 txt = (b.get("text") or "").strip()
                 if not txt or not looks_like_figure_label(txt):
                     continue
-                # 标题特征（编号开头 / 短且加粗）不吸收 —— 那是章节标题
-                if re.match(r"^\s*\d+(\.\d+)*\s+\S", txt) or _caption_like(b):
-                    continue
-                # 题注（含上一张图的）是边界，不吸收
-                if looks_caption(txt):
-                    continue
-                kind_guess, _lvl = _classify(txt, float(b.get("size") or body),
-                                             body, bool(b.get("bold")),
-                                             float(b.get("math_ratio") or 0), pno, {"in_refs": False})
-                if kind_guess in ("heading", "title", "caption", "reference", "abstract"):
-                    continue
+                # **先判"数字占主导"**：图表的刻度碎片常被判成标题，而它们
+                # 又恰好以数字开头（`0.55 0.7 0.19 efn:[1,128] …`）——
+                # 若先走"编号开头的标题不吸收"那条守卫，它们会被整批放过（踩过）。
+                # 真标题（`3.1 Threat Model & Security Guarantees`）数字占比很低。
+                toks = txt.split()
+                numeric = sum(1 for t in toks
+                              if re.fullmatch(r"[\d.,:%\-\[\]()]+", t or ""))
+                numeric_dominant = bool(toks) and numeric / len(toks) >= 0.5
+                if not numeric_dominant:
+                    # 标题特征（编号开头 / 短且加粗）不吸收 —— 那是章节标题
+                    if re.match(r"^\s*\d+(\.\d+)*\s+\S", txt) or _caption_like(b):
+                        continue
+                    # 题注（含上一张图的）是边界，不吸收
+                    if looks_caption(txt):
+                        continue
+                    kind_guess, _lvl = _classify(txt, float(b.get("size") or body),
+                                                 body, bool(b.get("bold")),
+                                                 float(b.get("math_ratio") or 0),
+                                                 pno, {"in_refs": False})
+                    if kind_guess in ("heading", "title", "caption",
+                                      "reference", "abstract"):
+                        continue
                 # ⚠️ 放进 **labels** 而不是 content：坐标轴刻度/图例不是"可读内容"，
                 # 塞进 content 会让"纯图形的图"看起来"有文字"，模型就不写译注了
                 # （测试当场抓到：合成页的纯图形图被判成"有内容"）。

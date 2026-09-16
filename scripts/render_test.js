@@ -65,7 +65,17 @@ setTimeout(() => {
     problems.push('左右栏数量不一致: rows=' + rows.length + ' en=' + en.length + ' zh=' + zh.length);
   }
   if (zh.length && !zh[0].textContent.trim()) problems.push('第一个译栏为空');
-  if (terms.length === 0) problems.push('术语高亮没有生效');
+  // 术语高亮：**只在文档本身有术语时**要求标出来。
+  // 高亮用的是"全局术语表"（唯一真源），文档没有术语就不该有标记 ——
+  // 无条件要求会让"没有术语的测试页"永远失败（踩过）。
+  let hasTerms = 0;
+  try {
+    const dataz = JSON.parse(d.getElementById('ee-doc-data').textContent);
+    hasTerms = ((dataz.glossary || []).length)
+      + Object.keys(dataz.translations || {})
+          .reduce((n, k) => n + (((dataz.translations[k] || {}).terms || []).length), 0);
+  } catch (e) { /* 忽略 */ }
+  if (hasTerms > 0 && terms.length === 0) problems.push('术语高亮没有生效（文档有术语却零标记）');
   if (mathish === 0) problems.push('没有识别到任何公式片段');
   if (pending.length > 0) problems.push('存在 ' + pending.length + ' 个「待翻译」单元格');
   if (gutters !== rows.length) problems.push('页码栏缺失：' + gutters + '/' + rows.length);
@@ -154,7 +164,7 @@ setTimeout(() => {
 
   console.log('段落行数      :', rows.length);
   console.log('英文栏 / 译栏  :', en.length, '/', zh.length);
-  console.log('术语高亮节点   :', terms.length);
+  console.log('术语高亮节点   :', terms.length, '（文档术语条目 ' + hasTerms + '）');
   console.log('含公式的英文段 :', mathish);
   console.log('待翻译单元格   :', pending.length);
   console.log('重建原文段落   :', rebuilt.length, '（数据中 ' + withEn + ' 段）');
