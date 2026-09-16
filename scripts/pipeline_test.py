@@ -460,36 +460,70 @@ def main() -> None:
             check("导出里仍有段落页码栏", "p." in h)
 
         # ------------------------------------------------------------ 16
+        # ------------------------------------------------------------ 16
         print("\n== 16. 表格 vs 伪代码 vs 图（别把伪代码塞进表格）==")
-        # 背景：LaTeX 的 algorithm 环境上下各一条 \hrule，长得和 booktabs 表格一样，
+        # 背景：LaTeX 的 algorithm 环境上下各一条 \hrule，和 booktabs 表格长得一样，
         # 初版把 `Algorithm 1: SEARCH(...)` 当成了 5 列表格，行号缩进全被拆成单元格。
-        # 判据：伪代码看内容（Algorithm 标题/行号/关键字），图文看题注（Table N vs Figure N）。
-        comp = ROOT / "dist" / "data" / "docs" / "20260916-132453-compass-encrypted-semantic-search-with-h-99cd" / "source.pdf"
-        if comp.exists():
-            cdata = extract_pdf(comp, 8, 8)          # 第 8 页正是 Algorithm 1
-            calg = [p for p in cdata["paragraphs"] if p.get("kind") == "algorithm"]
-            ctbl = [p for p in cdata["paragraphs"] if p.get("kind") == "table"]
-            check("伪代码被识别为 algorithm 而不是 table", len(calg) >= 1,
-                  f"algorithm={len(calg)} table={len(ctbl)}")
-            if calg:
-                lines = (calg[0].get("algorithm") or {}).get("lines") or []
-                check("伪代码按行保留（不是拆成单元格）", len(lines) >= 10, f"{len(lines)} 行")
-                check("首行是 Algorithm 标题", lines[0].strip().lower().startswith("algorithm"),
-                      lines[0][:48])
-                check("行号与缩进保留", any(l.strip()[:1].isdigit() for l in lines)
-                      and any(l.startswith("  ") for l in lines))
-            # 题注判据：挂 Figure 题注的区域不能被当成表格
-            check("挂 Figure 题注的图没被当成表格", len(ctbl) <= 2,
-                  f"该页识别出 {len(ctbl)} 个表格")
-            # 协议健壮性
-            a2 = {"lines": ["1 a", "2 b", "3 c"]}
-            check("伪代码行数不符时拒绝套用",
-                  T.apply_algorithm_lines(a2, {"lines": ["x"]}) is None)
-            check("伪代码行数一致时原样保留顺序",
-                  (T.apply_algorithm_lines(a2, {"lines": ["一", "二", "三"]}) or {})
-                  .get("lines") == ["一", "二", "三"])
-        else:
-            print("  （跳过：本机没有 Compass 样张，CI 上不依赖它）")
+        # ⚠️ 用**自造的合成页面**，不依赖任何真实论文：曾把断言挂在用户上传的 PDF 上，
+        #    用户数据一没，测试就静默跳过 —— 测试不应该有这种外部依赖。
+        import pymupdf
+        tmp_pdf = Path(tmp_dir) / "blocks.pdf"
+        docu = pymupdf.open()
+        pg = docu.new_page()
+
+        def rule(y, x0=72, x1=300):
+            pg.draw_line(pymupdf.Point(x0, y), pymupdf.Point(x1, y), width=1.2)
+
+        def put(x, y, text, size=9):
+            pg.insert_text((x, y), text, fontsize=size)
+
+        # ① 伪代码块：两条等宽横线夹着 Algorithm 内容（无 Table 题注）
+        rule(80)
+        for i, line in enumerate(["Algorithm 1: SEARCH(q, ep)", "1  V <- ep",
+                                  "2  for i <- 1..n do", "3  return V"]):
+            put(76, 96 + i * 12, line)
+        rule(150)
+        # ② 真表格：三条横线 + Table 题注
+        rule(200)
+        put(76, 216, "Model   Time   Rounds")
+        rule(222)
+        put(76, 238, "Llama   1.00   66")
+        rule(246)
+        put(120, 266, "Table 1: Latency and rounds.", 8)
+        # ③ 挂 Figure 题注的区域：坐标轴网格线 + 刻度数字（不是表格）
+        for yy in (300, 320, 340):
+            rule(yy, 72, 220)
+        for i, t in enumerate(["0.04", "0.08", "0.12"]):
+            put(78, 314 + i * 20, t, 8)
+        put(90, 360, "Figure 1: Latency breakdown.", 8)
+        docu.save(tmp_pdf)
+        docu.close()
+
+        bdata = extract_pdf(tmp_pdf, 1, 1)
+        bt = [p for p in bdata["paragraphs"] if p.get("kind") == "table"]
+        ba = [p for p in bdata["paragraphs"] if p.get("kind") == "algorithm"]
+        check("伪代码识别为 algorithm（不是 table）", len(ba) == 1,
+              f"algorithm={len(ba)} table={len(bt)}")
+        if ba:
+            al = (ba[0].get("algorithm") or {}).get("lines") or []
+            check("伪代码按行保留行号", any(x.strip()[:1].isdigit() for x in al), f"{len(al)} 行")
+            check("伪代码首行是 Algorithm 标题",
+                  bool(al) and al[0].strip().lower().startswith("algorithm"), al[:1])
+        check("有 Table 题注的才是表格", len(bt) == 1, f"{len(bt)} 个")
+        if bt:
+            g = bt[0]["table"]
+            check("表格网格正确", g["columns"] >= 2 and len(g["rows"]) >= 2,
+                  f"{g['columns']} 列 × {len(g['rows'])} 行")
+        # 挂 Figure 题注的区域不能是表格（坐标轴网格线会围出"闭合单元格"）
+        check("挂 Figure 题注的图没被当成表格", len(bt) <= 1, f"{len(bt)} 个")
+        # 协议健壮性
+        a2 = {"lines": ["1 a", "2 b", "3 c"]}
+        check("伪代码行数不符时拒绝套用",
+              T.apply_algorithm_lines(a2, {"lines": ["x"]}) is None)
+        check("伪代码行数一致时原样保留顺序",
+              (T.apply_algorithm_lines(a2, {"lines": ["一", "二", "三"]}) or {})
+              .get("lines") == ["一", "二", "三"])
+
 
     finally:
         # ⚠️ 清理必须放在 finally，但**测试节必须留在 try 里**：第 12/13/15 节依赖

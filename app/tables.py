@@ -86,16 +86,54 @@ def _rules(page: Any) -> list[tuple[float, float, float]]:
     return sorted(out)
 
 
+def _has_text_between(page: Any, y_a: float, y_b: float, x0: float, x1: float) -> bool:
+    """两条横线之间有没有文字（用来判断它们是否属于同一个块）。"""
+    if y_b - y_a < 8.0:
+        return True          # 挨得很近，算同一块
+    try:
+        words = page.get_text("words")
+    except Exception:  # noqa: BLE001
+        return True
+    for w in words:
+        if x0 - 4 <= w[0] <= x1 + 4 and y_a + 1.0 < w[1] < y_b - 1.0:
+            return True
+    return False
+
+
+def _split_regions(page: Any, x0: float, x1: float, ys: list[float]) -> list[dict]:
+    """同一 x 范围的横线：**两条横线之间没有文字就切开** —— 它们是两个块。
+
+    为什么必须切：同一页里"伪代码块"和"表格"经常左右边界完全相同
+    （都在版心宽度内、都从同一个左边距起），只按 x 范围分组会把它们并成一个
+    跨越大半页的"区域"，然后伪代码判据一命中，**后面的表格就被整个吞掉**
+    （踩过：合成样张里伪代码 + 表格相邻，表格直接消失）。
+    """
+    out: list[dict] = []
+    cur = [ys[0]]
+    for y in ys[1:]:
+        if _has_text_between(page, cur[-1], y, x0, x1):
+            cur.append(y)
+        else:
+            if len(cur) >= _MIN_RULE_COUNT and cur[-1] - cur[0] >= _MIN_TABLE_HEIGHT:
+                out.append({"x0": x0, "x1": x1, "ys": cur})
+            cur = [y]
+    if len(cur) >= _MIN_RULE_COUNT and cur[-1] - cur[0] >= _MIN_TABLE_HEIGHT:
+        out.append({"x0": x0, "x1": x1, "ys": cur})
+    return out
+
+
 def table_regions(page: Any) -> list[dict]:
-    """按 x 范围把横线分组 → 表格区域。`\\cmidrule` 宽度不同，会自然落单。"""
+    """按 x 范围把横线分组 → 表格区域；组内再按"中间有没有文字"细分。
+
+    只看 x 范围完全一致的横线 —— booktabs 的 top/mid/bottom rule 等宽，
+    而 `\\cmidrule`（表头跨列用的部分横线）宽度不同，会自然落单。
+    """
     groups: dict[tuple[float, float], list[float]] = {}
     for y, x0, x1 in _rules(page):
         groups.setdefault((x0, x1), []).append(y)
     out: list[dict] = []
     for (x0, x1), ys in groups.items():
-        ys = sorted(ys)
-        if len(ys) >= _MIN_RULE_COUNT and ys[-1] - ys[0] >= _MIN_TABLE_HEIGHT:
-            out.append({"x0": x0, "x1": x1, "ys": ys})
+        out.extend(_split_regions(page, x0, x1, sorted(ys)))
     out.sort(key=lambda g: g["ys"][0])
     return out
 
