@@ -107,6 +107,11 @@ def main() -> None:
               client.get("/login").status_code == 404
               and client.get("/account").status_code == 404)
         check("已无 /api/auth 接口", client.get("/api/auth/me").status_code == 404)
+        # 图标：桌面窗口模式下 WebView 会请求它，缺了会在日志里刷 404
+        check("favicon 可访问（窗口/标签页有图标）",
+              client.get("/static/favicon.ico").status_code == 200)
+        check("页面已声明 favicon 引用",
+              'rel="icon"' in client.get("/").text)
 
         # ------------------------------------------------------------ 2
         print("\n== 2. 安全响应头 ==")

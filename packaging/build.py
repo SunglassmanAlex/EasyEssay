@@ -51,6 +51,14 @@ HIDDEN_IMPORTS = [
     "uvicorn.lifespan.off",
     "app.main",
     "app.cli",
+    # 原生桌面窗口（装了 pywebview 才有）。它的 GUI 后端是运行时动态选的，
+    # PyInstaller 静态分析不到，不显式声明的话打包后窗口起不来、
+    # 只能悄悄退回浏览器模式 —— 用户会以为"这个 exe 不是 app"。
+    "webview",
+    "webview.platforms.winforms",     # Windows：WinForms + WebView2
+    "webview.platforms.gtk",          # Linux
+    "webview.platforms.cocoa",        # macOS
+    "clr",                            # pythonnet（Windows 后端依赖）
 ]
 
 README_TXT = """EasyEssay · 论文翻译助手
@@ -59,18 +67,27 @@ README_TXT = """EasyEssay · 论文翻译助手
 怎么用（三步）
 --------------
 1. 把本目录整个解压到一个**可写**的位置（例如 D:\\\\EasyEssay），不要放在压缩包里直接运行。
-2. 双击 EasyEssay（Windows 下是 EasyEssay.exe）。首次运行 Windows 防火墙可能弹窗，选“允许访问”
-   （只是让本机页面能连上本地服务，不允许也不影响本机使用）。
-3. 浏览器会自动打开 http://127.0.0.1:8765 —— 第一次会让你填自己的 DeepSeek API Key
+2. 双击 EasyEssay（Windows 下是 EasyEssay.exe）。首次运行系统防火墙可能弹窗，选“允许访问”
+   （只是让应用连上它自己启动的本地服务，不允许也不影响使用）。
+3. 会弹出一个应用窗口 —— 第一次让你填自己的 DeepSeek API Key
    （只保存在本机 data/settings.json，不会上传到任何地方）。
 
 之后就能：上传 PDF → 自动逐段翻译 → 左右对照阅读 → 选中任意句子追问。
 顶栏「导出 HTML」可得到可独立打开、可分享的对照阅读页。
 
+窗口还是浏览器？
+----------------
+默认弹**应用窗口**。想要浏览器标签页（或窗口起不来时兜底），加参数：
+  EasyEssay.exe --browser        用浏览器打开
+  EasyEssay.exe --no-browser     不开浏览器，只启动服务（自己访问提示的地址）
+  EasyEssay.exe --open           让同一局域网的别人也能访问（无密码，慎用）
+
 需要什么
 --------
 * Windows 10/11、macOS 12+ 或 Linux（x86_64）
 * 一个 DeepSeek API Key（https://platform.deepseek.com/api_keys）
+* 桌面窗口在 Windows 上依赖系统自带的 WebView2（Win10/11 一般都有）；
+  万一没有，程序会自己改用浏览器打开，不影响使用。
 * 扫描件需要 OCR，可用 pip 装 requirements-ocr.txt 后改用源码方式运行
 
 数据在哪
@@ -138,6 +155,13 @@ def main() -> int:
     # 这些是重量级可选依赖，装了就带上，没装也不影响主流程
     for mod in ("pymupdf", "pdfplumber", "pylatexenc", "dotenv", "PIL", "rapidocr_onnxruntime"):
         cmd += ["--hidden-import", mod]
+    # pywebview 自带 js/css 资源（webview/js、webview/lib），必须一并收集，
+    # 否则窗口里的 JS 桥接会缺文件
+    try:
+        import webview  # noqa: F401
+        cmd += ["--collect-all", "webview", "--collect-submodules", "webview.platforms"]
+    except Exception:  # noqa: BLE001
+        print("（未安装 pywebview，本次构建只能通过浏览器打开）")
     cmd.append(str(ROOT / "easyessay.py"))
 
     print("执行：", " ".join(cmd[:6]), "…")

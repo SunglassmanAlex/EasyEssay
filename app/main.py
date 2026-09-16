@@ -514,6 +514,80 @@ def _lan_urls(port: int) -> list[str]:
     return urls
 
 
+def _webview_available() -> bool:
+    """能不能开原生桌面窗口（装了 pywebview 且平台支持）。
+
+    故意做成"能就用、不能用就退回浏览器"：pywebview 在 Linux 上依赖 GTK/Qt，
+    缺了会 import 失败；这种情况下不能让程序起不来。
+    """
+    try:
+        import webview  # noqa: F401
+    except Exception:  # noqa: BLE001
+        return False
+    return True
+
+
+def _run_native_window(url: str, server: Any, title: str = "EasyEssay · 论文翻译助手") -> bool:
+    """开一个原生窗口指向本地服务；窗口关掉就结束。失败返回 False（交给浏览器模式）。
+
+    服务器必须在**后台线程**跑：Windows 上 pywebview 用 WinForms，要求主线程归它。
+    """
+    import os
+
+    try:
+        import webview
+    except Exception:  # noqa: BLE001
+        return False
+    try:
+        # 默认是关的 —— 不打开的话，应用里的「导出 HTML」在窗口模式下会被静默拦掉
+        webview.settings["ALLOW_DOWNLOADS"] = True
+        # 外链（例如"去申请 Key"）交给系统浏览器，别在应用窗口里打开
+        webview.settings["OPEN_EXTERNAL_LINKS_IN_BROWSER"] = True
+    except Exception:  # noqa: BLE001
+        pass
+    try:
+        win = webview.create_window(title, url, width=1280, height=880,
+                                    min_size=(940, 620))
+        _wait_ready(url, timeout=25.0)
+        # 测试钩子：设了 EE_WINDOW_AUTOCLOSE=<秒> 就自动关窗并退出。
+        # 给自动化冒烟测试用（GUI 程序没法在 CI 里手点关闭），不影响正常使用。
+        auto = os.getenv("EE_WINDOW_AUTOCLOSE")
+
+        def _auto_close() -> None:
+            time.sleep(float(auto or 0))
+            try:
+                win.destroy()
+            except Exception:  # noqa: BLE001
+                pass
+
+        if auto:
+            threading.Thread(target=_auto_close, daemon=True).start()
+        webview.start()
+        # 走到这里说明窗口被关了 —— 顺手停掉服务，进程干净退出
+        try:
+            server.should_exit = True
+        except Exception:  # noqa: BLE001
+            pass
+        return True
+    except Exception as exc:  # noqa: BLE001
+        print(f"  （原生窗口打开失败，改用浏览器：{exc}）")
+        return False
+
+
+def _wait_ready(url: str, timeout: float = 20.0) -> None:
+    """等服务真的能响应了再开窗口，否则用户会先看到一个错误页。"""
+    import urllib.error
+    import urllib.request
+
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        try:
+            with urllib.request.urlopen(url + "/api/health", timeout=1.0):
+                return
+        except (urllib.error.URLError, OSError):
+            time.sleep(0.15)
+
+
 def main() -> None:
     import argparse
     import os
@@ -530,6 +604,10 @@ def main() -> None:
     ap.add_argument("--reload", action="store_true")
     ap.add_argument("--no-browser", action="store_true",
                     help="不自动打开浏览器（默认会自动打开）")
+    ap.add_argument("--window", dest="force_window", action="store_true",
+                    help="强制用原生桌面窗口（装了 pywebview 时默认就是它）")
+    ap.add_argument("--browser", action="store_true",
+                    help="强制用浏览器打开，不开桌面窗口")
     args = ap.parse_args()
     if args.open_lan:
         args.host = "0.0.0.0"
@@ -560,8 +638,28 @@ def main() -> None:
               "name=\"EasyEssay\" dir=in action=allow protocol=TCP localport=%d" % args.port)
     else:
         print("    （当前仅本机可访问；要让朋友连上用 --host 0.0.0.0 或 --open）")
-    print()
 
+    # 原生窗口模式（默认）：把服务放到后台线程，主线程交给窗口。
+    # 注意 `--reload` 不能在窗口模式下用（reload 要求主线程跑服务器）。
+    want_window = (args.force_window or _webview_available()) and not args.browser and not args.reload
+    if want_window:
+        config = uvicorn.Config(app, host=args.host, port=args.port, log_level="info")
+        server = uvicorn.Server(config)
+        threading.Thread(target=server.run, daemon=True).start()
+        print("    窗口：   正在打开桌面窗口…（关掉窗口即退出）")
+        print()
+        if _run_native_window(f"http://127.0.0.1:{args.port}", server):
+            return
+        # 窗口没起来 → 退回浏览器模式，不能让用户对着黑屏干等
+        _open_browser_later(f"http://127.0.0.1:{args.port}")
+        while not getattr(server, "should_exit", False):
+            try:
+                time.sleep(0.5)
+            except KeyboardInterrupt:
+                break
+        return
+
+    print()
     uvicorn.run("app.main:app", host=args.host, port=args.port, reload=args.reload)
 
 
