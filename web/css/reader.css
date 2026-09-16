@@ -276,12 +276,31 @@ a:hover { text-decoration: underline; }
 
 /* 公式 */
 .eq {
+  display: block;
   margin: 10px 0;
   padding: 9px 6px;
   background: var(--eqbg);
   border-radius: 6px;
   overflow-x: auto;
   text-align: center;
+}
+
+/* 认不出的字形（后台占位符 ⟦?⟧）。
+   刻意做得像"一个明确的提示"而不是"乱码"：虚线框 + 强调色 + tooltip 说明。
+   渲染时只在 MathJax 排版完成后替换，且跳过公式内部（见 bilingual.js）。 */
+.glyph-missing {
+  display: inline-block;
+  margin: 0 2px;
+  padding: 0 5px;
+  border: 1px dashed var(--accent);
+  border-radius: 4px;
+  font-size: .86em;
+  font-style: normal;
+  color: var(--accent);
+  background: transparent;
+  cursor: help;
+  white-space: nowrap;
+  vertical-align: baseline;
 }
 .eq-tag { text-align: center; font-size: 13px; color: var(--muted); }
 mjx-container { max-width: 100%; }

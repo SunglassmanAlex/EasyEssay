@@ -90,6 +90,29 @@ setTimeout(() => {
     } else { rawOk = true; }
   } catch (e) { problems.push('视图/原文切换异常: ' + e.message); }
 
+  // ⟦?⟧（PDF 字体表坏、认不出的字形）在页面上的显示。
+  // 直接裸着晾出来跟乱码没区别 —— 必须换成带说明的小标记。
+  // jsdom 里 MathJax 不会加载，所以不靠"排版之后"那条路径，直接调暴露出来的 API。
+  let glyphOk = false, glyphNote = '（未测）';
+  try {
+    const api = dom.window.EasyEssay.__api;
+    const host = zh[0] || en[0];
+    if (api && api.markMissingGlyphs && host) {
+      const probe = d.createElement('div');
+      probe.textContent = 'before \u27e6?\u27e7 after';
+      host.appendChild(probe);
+      const n = api.markMissingGlyphs();
+      const chip = probe.querySelector('.glyph-missing');
+      glyphOk = n > 0 && !!chip && (chip.title || '').length > 10
+        && probe.textContent.indexOf('\u27e6?\u27e7') < 0;
+      glyphNote = '标记 ' + n + ' 处，文案「' + (chip ? chip.textContent : '?') + '」';
+      probe.remove();
+    } else {
+      glyphNote = '（未暴露 markMissingGlyphs）';
+    }
+  } catch (e) { glyphNote = '异常: ' + e.message; }
+  if (!glyphOk) problems.push('⟦?⟧ 没有被换成带说明的标记（' + glyphNote + '）');
+
   console.log('段落行数      :', rows.length);
   console.log('英文栏 / 译栏  :', en.length, '/', zh.length);
   console.log('术语高亮节点   :', terms.length);
@@ -100,6 +123,7 @@ setTimeout(() => {
   console.log('表格 / 公式框   :', d.querySelectorAll('.tblbox table').length, '/', d.querySelectorAll('.eq').length);
   console.log('视图切换       :', viewOk ? 'OK' : 'FAIL');
   console.log('原文/重建切换  :', rawOk ? 'OK' : 'FAIL');
+  console.log('未知字形标记   :', glyphOk ? 'OK' : 'FAIL', glyphNote);
   console.log('第1段英文       :', (en[0] ? en[0].textContent.trim().slice(0, 60) : ''));
   console.log('第1段中文       :', (zh[0] ? zh[0].textContent.trim().slice(0, 60) : ''));
   const withMath = Array.from(en).find(n => /\$[^$]+\$/.test(n.textContent));

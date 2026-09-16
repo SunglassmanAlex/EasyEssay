@@ -30,18 +30,28 @@
     }
   };
 
-  function typeset(root) {
+  function typeset(root, after) {
+    // `after` 在排版真正跑完之后调用一次。必须等排版完再动 DOM ——
+    // 往 `$...$` 中间插元素会把公式切成两半（见 markMissingGlyphs）。
+    var fired = false;
+
+    function done() {
+      if (fired) return;
+      fired = true;
+      if (after) { try { after(); } catch (e) { } }
+    }
+
     function attempt() {
       var MJ = global.MathJax;
       if (!MJ) return false;
       if (MJ.startup && MJ.startup.promise) {
         MJ.startup.promise.then(function () {
-          try { MJ.typesetPromise([root]).catch(function () { }); } catch (e) { }
-        }).catch(function () { });
+          try { MJ.typesetPromise([root]).then(done).catch(done); } catch (e) { done(); }
+        }).catch(done);
         return true;
       }
       if (typeof MJ.typesetPromise === 'function') {
-        try { MJ.typesetPromise([root]).catch(function () { }); return true; } catch (e) { return false; }
+        try { MJ.typesetPromise([root]).then(done).catch(done); return true; } catch (e) { return false; }
       }
       return false;
     }
@@ -49,8 +59,67 @@
     var tries = 0;
     var timer = setInterval(function () {
       tries += 1;
-      if (attempt() || tries > 66) clearInterval(timer);
+      if (attempt() || tries > 66) {
+        clearInterval(timer);
+        if (tries > 66) done();   // MathJax 起不来也要把标记打上
+      }
     }, 150);
+  }
+
+  /**
+   * 把 ⟦?⟧ 换成看得懂的标记。
+   *
+   * 它是"PDF 字体表损坏、这个字形认不出来"的占位符（见 app/mathify.py）。
+   * 裸着晾出来跟乱码没区别 —— 用户第一反应就是"你这识别怎么全是乱码"。
+   * 这里包一层带 tooltip 的小标记，让它是"一个明确的提示"而不是"乱码"。
+   *
+   * 只在排版**之后**调用，且跳过 MathJax 生成的 mjx-container ——
+   * 公式内部的字符由 MathJax 自己画，往里插元素会破坏公式。
+   */
+  function markMissingGlyphs(root) {
+    if (!root || !document.createTreeWalker) return 0;
+    var GL = '\u27e6?\u27e7';        // ⟦?⟧
+
+    function insideMath(node) {
+      var p = node.parentNode;
+      while (p && p !== root) {
+        var tag = (p.tagName || '').toLowerCase();
+        if (tag === 'mjx-container' || tag === 'mjx-assistive-mml') return true;
+        var cls = p.className;
+        if (typeof cls === 'string' && (cls.indexOf('mjx') >= 0 || cls.indexOf('MathJax') >= 0)) {
+          return true;
+        }
+        p = p.parentNode;
+      }
+      return false;
+    }
+
+    var walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, {
+      acceptNode: function (node) {
+        if (!node.nodeValue || node.nodeValue.indexOf(GL) < 0) return NodeFilter.FILTER_SKIP;
+        return insideMath(node) ? NodeFilter.FILTER_SKIP : NodeFilter.FILTER_ACCEPT;
+      }
+    }, false);
+
+    var targets = [];
+    var n;
+    while ((n = walker.nextNode())) targets.push(n);
+    targets.forEach(function (node) {
+      var parts = node.nodeValue.split(GL);
+      var frag = document.createDocumentFragment();
+      parts.forEach(function (seg, i) {
+        if (i) {
+          var s = el('span', 'glyph-missing', '字形?');
+          s.title = 'PDF 的字体表损坏了，这个字形认不出来 —— 不是乱码，也不是识别错误。'
+            + '它多半是个大括号或大型运算符；已交给 AI 按上下文还原：'
+            + '切到顶栏「重建后」看结果，若仍是这个样子，可点「修复公式段」重试。';
+          frag.appendChild(s);
+        }
+        if (seg) frag.appendChild(document.createTextNode(seg));
+      });
+      if (node.parentNode) node.parentNode.replaceChild(frag, node);
+    });
+    return targets.length;
   }
 
   // ------------------------------------------------------------ 术语高亮
@@ -295,7 +364,7 @@
     var api = {
       state: state,
       toc: toc,
-      typeset: function () { typeset(wrap); },
+      typeset: function () { typeset(wrap, function () { markMissingGlyphs(wrap); }); },
       setViewMode: function (mode) {
         state.viewMode = mode;
         container.classList.toggle('view-en', mode === 'en');
@@ -318,7 +387,7 @@
             fillCell(s.cell, { kind: s.para.kind, text: s.fixed }, s.para.kind || 'text', null);
           }
         });
-        if (switches.length) typeset(wrap);
+        if (switches.length) typeset(wrap, function () { markMissingGlyphs(wrap); });
         return state.showRaw;
       },
       setScale: function (scale) {
@@ -343,14 +412,15 @@
         Object.keys(rowMap).forEach(function (k) { rowMap[k].classList.remove('active'); });
         if (rowMap[paraId]) rowMap[paraId].classList.add('active');
       },
-      rows: rowMap
+      rows: rowMap,
+      markMissingGlyphs: function () { return markMissingGlyphs(wrap); }
     };
 
     api.setViewMode(state.viewMode);
     if (state.hideRefs) container.classList.add('hide-refs');
     api.setScale(state.scale);
     if (store.get('ee-font') === 'sans') document.body.classList.add('ee-sans');
-    typeset(wrap);
+    typeset(wrap, function () { markMissingGlyphs(wrap); });
     if (opts.onAsk) attachSelection(container, opts.onAsk);
     if (opts.themeToggle !== false) {
       var tgl = el('button', 'tgl', '切换深/浅色');
