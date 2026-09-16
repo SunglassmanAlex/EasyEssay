@@ -11,9 +11,10 @@ mkdir -p data
 
 echo
 echo "  EasyEssay 论文翻译助手"
-echo "  本机使用： ./run.sh             （只绑 127.0.0.1）"
-echo "  给朋友用： ./run.sh --open      （监听局域网，会打印可访问地址）"
-echo "  停止服务：Ctrl+C"
+echo "  本机使用： ./run.sh              （弹出应用窗口，只绑 127.0.0.1）"
+echo "  用浏览器： ./run.sh --browser    （不开窗口，改用浏览器打开）"
+echo "  给朋友用： ./run.sh --open       （监听局域网，会打印可访问地址）"
+echo "  停止服务：关掉应用窗口，或在本窗口按 Ctrl+C"
 echo
 
 exec "$PY" easyessay.py --port 8765 "$@"

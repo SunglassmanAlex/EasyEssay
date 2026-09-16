@@ -12,9 +12,10 @@ if not exist ".env" if exist ".env.example" copy /y ".env.example" ".env" >nul
 
 echo.
 echo   EasyEssay 论文翻译助手
-echo   本机使用： run.bat            （只绑 127.0.0.1）
-echo   给朋友用： run.bat --open     （监听局域网，会打印可访问地址）
-echo   停止服务：在本窗口按 Ctrl+C
+echo   本机使用： run.bat              （弹出应用窗口，只绑 127.0.0.1）
+echo   用浏览器： run.bat --browser    （不开窗口，改用浏览器打开）
+echo   给朋友用： run.bat --open       （监听局域网，会打印可访问地址）
+echo   停止服务：关掉应用窗口，或在本窗口按 Ctrl+C
 echo.
 
 "%PY%" easyessay.py --port 8765 %*

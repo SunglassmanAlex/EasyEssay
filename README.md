@@ -1,5 +1,9 @@
 # EasyEssay · 论文翻译助手
 
+[![Release](https://img.shields.io/github/actions/workflow/status/SunglassmanAlex/EasyEssay/release.yml?label=build)](https://github.com/SunglassmanAlex/EasyEssay/actions/workflows/release.yml)
+[![Latest release](https://img.shields.io/github/v/release/SunglassmanAlex/EasyEssay?label=下载)](https://github.com/SunglassmanAlex/EasyEssay/releases/latest)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+
 上传 PDF → 自动抽取段落与公式 → 用**你自己的 DeepSeek API Key** 逐段翻译 →
 得到一个**左边英文原文、右边中文译文**的对照阅读界面，可以选中任意句子直接追问 AI。
 
