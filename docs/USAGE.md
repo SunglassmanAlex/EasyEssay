@@ -93,7 +93,24 @@ PDF **只存字形，不存数学语义**——`\vec`、`\mathrm`、`\langle`、
 - 若某段重建结果可疑：点「原始抽取」对照，或选中该段用「问 AI → 译得更准」让它单段重来。
 - 想把 EasyEssay 当"公式清理器"用：`--restore-only`，或把翻译提示词改成"只输出重建后的原文"。
 
-## 6. 把翻译好的论文发布成网页
+## 6. 表格是怎么处理的
+
+论文里的表格绝大多数是 **booktabs 风格：只有顶/中/底三条横线，一根竖线都没有**。
+`find_tables(strategy="lines")` 要求"闭合单元格"，对这种表一个都找不到；
+`strategy="text"` 又会把整页正文吞进一个"表"里。所以抽取阶段自己按几何重建
+（见 `app/tables.py`），把它还原成二维网格后再渲染成**真正的 `<table>`**：
+
+- 左右两栏各完整一份，数值 / 行序 / 列义与原文一致；
+- **跨列表头**（如 `Perplexity (Lower is better)` 横跨两列）用 `colspan` 表达 ——
+  markdown 做不到这一点，所以表格不能用 markdown 表示；
+- 翻译时**整张表作为一段下发**（给模型的是二维单元格数组，不是拍平的文本），
+  模型返回同形状的数组，再按原网格把跨列关系套回去。
+  行列数不匹配一律拒绝，宁可如实标成未翻译，也不让单元格错位。
+
+已知边界：`\multirow`（跨行单元格）不支持，会并进相邻行；完全靠空白对齐、
+没有横线的表格识别不到。
+
+## 7. 把翻译好的论文发布成网页
 
 ```bash
 python -m app.cli site --out site --title "我的论文阅读库"
@@ -103,7 +120,7 @@ python -m app.cli site --out site --title "我的论文阅读库"
 整个目录丢到静态空间即可；静态页不含任何密钥，可以放心公开。
 想放到自己的域名/静态空间（GitHub Pages、对象存储等）的步骤见 [`DEPLOY.md`](DEPLOY.md)。
 
-## 7. 重新抽取（升级抽取器后）
+## 8. 重新抽取（升级抽取器后）
 
 抽取器升级会让段落被合并/新增，**段落编号随之变化**。直接重抽会让已有译文张冠李戴，
 所以用：
@@ -115,7 +132,7 @@ python -m app.cli site --out site --title "我的论文阅读库"
 它按「内容锚点」把旧译文搬到新段落，两段并一段时自动**拼接**两份译文，
 搬不动的会明确列出（不静默丢弃）。跑完若提示有几段待重译，点「继续翻译」即可补上。
 
-## 8. 打包给自己/别人下载
+## 9. 打包给自己/别人下载
 
 ```bash
 pip install -r requirements-build.txt        # 只需 PyInstaller
@@ -127,7 +144,7 @@ python packaging/make_icon.py                # 重新生成应用图标（代码
 把 zip 发给别人，解压双击即用；或者打 tag 推到 GitHub，自动为三平台构建并挂到 Release
 （见 `.github/workflows/release.yml`）。
 
-## 9. 命令行批量转换
+## 10. 命令行批量转换
 
 不想开浏览器时（例如批量处理一堆 PDF）：
 
@@ -141,7 +158,7 @@ python -m app.cli --help                                  # 全部参数
 默认会把文档留在文档库里，导出后仍可在网页里继续阅读、追问；加 `--temp` 则用完即删。
 `--system-prompt` / `--model` / `--batch` / `--no-formula-fix` 可覆盖设置里的默认值。
 
-## 10. 自测（不需要 API Key）
+## 11. 自测（不需要 API Key）
 
 改动代码后建议跑一遍，两条都绿再交付：
 
@@ -149,7 +166,8 @@ python -m app.cli --help                                  # 全部参数
 # 接口层端到端（上传→抽取→翻译→导出→问答，含 404/错误码；不需要 API Key）
 python scripts/http_test.py
 
-# 翻译流水线（分批 / 术语表 / 漏返补漏 / 断点续译 / 停止 / 单段重译 / 流式问答 / 导出）
+# 翻译流水线（分批 / 术语表 / 漏返补漏 / 断点续译 / 停止 / 单段重译 / 流式问答 /
+#   字形名还原 / 表格整块抽取与整表翻译 / 导出；当前 77 项）
 python scripts/pipeline_test.py
 
 # 首页「填 Key 即用」流程（jsdom 驱动真实页面）
@@ -164,7 +182,7 @@ EE_JSDOM="<你的 node_modules>/jsdom" \
 ```` ```json ```` 包裹的文本、并故意漏返某个段落 id，因此解析容错与补漏逻辑都是被真实路径验证的。
 `provider: "mock"` 只是自测开关，正常使用不受影响。
 
-## 11. 常见问题
+## 12. 常见问题
 
 **Q: 页面能打开但没有样式/公式是源码。**
 静态资源被缓存或 MathJax CDN 不通。强制刷新（Ctrl+F5）；项目自带
@@ -184,7 +202,7 @@ EE_JSDOM="<你的 node_modules>/jsdom" \
 **Q: 端口被占用。**
 `python -m app.main --port 8899`，然后访问 <http://127.0.0.1:8899>。
 
-## 12. API 接口一览
+## 13. API 接口一览
 
 | 方法 | 路径 | 说明 |
 |---|---|---|
@@ -201,7 +219,7 @@ EE_JSDOM="<你的 node_modules>/jsdom" \
 | GET/POST | `/api/settings` | 读写设置（Key、模型、提示词…） |
 | POST | `/api/settings/test` | 测试 Key / Base URL / 模型连通性 |
 
-## 13. 数据与重置
+## 14. 数据与重置
 
 ```
 data/settings.json          你的设置（含 API Key）
