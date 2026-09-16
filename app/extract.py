@@ -98,24 +98,36 @@ def _rows_to_markdown(rows: list | None) -> str:
     return "\n".join(lines)
 
 
-def _page_tables(page, size: float = 10.0) -> list[dict]:
-    """取出本页的表格（结构化网格 + markdown 文本）。
+def _page_tables(page, size: float = 10.0, captions: list[dict] | None = None) -> list[dict]:
+    """取出本页的**结构化块**：表格（网格）与伪代码（按行）。
 
     用 `app.tables` 自己按几何重建，**不用 PyMuPDF 的 find_tables**：
     论文里的表格几乎都是 booktabs 风格（只有横线），`lines` 策略一个都找不到；
     `text` 策略又会把整页正文吞进去。详见 app/tables.py 的模块说明。
+
+    `captions` 传入本页的题注块（用于区分 `Table N` 与 `Figure N`）——
+    这是把"图的坐标刻度""被切碎的正文"从表格候选里摘掉的关键判据。
     """
     try:
-        found = tables.extract_tables(page, size)
+        found = tables.extract_tables(page, size, captions)
     except Exception:  # noqa: BLE001
         return []
     out: list[dict] = []
     for t in found:
+        if t.get("kind") == "algorithm":
+            lines = (t.get("algorithm") or {}).get("lines") or []
+            if len(lines) < 3:
+                continue
+            out.append({"bbox": tuple(float(v) for v in t["bbox"]), "kind": "algorithm",
+                        "md": "\n".join(lines), "algorithm": {"lines": lines},
+                        "note": t.get("note", "")})
+            continue
         grid = t.get("table") or {}
         md = tables.grid_to_markdown(grid)
         if not md:
             continue
-        out.append({"bbox": tuple(float(v) for v in t["bbox"]), "md": md, "table": grid})
+        out.append({"bbox": tuple(float(v) for v in t["bbox"]), "kind": "table",
+                    "md": md, "table": grid, "note": t.get("note", "")})
     return out
 
 
@@ -439,7 +451,13 @@ def extract_pdf(path: str | Path, page_from: int | None = None,
         top_limit, bot_limit = rect.y0 + h * 0.062, rect.y1 - h * 0.055
 
         kept = []
-        tables = _page_tables(page, body) if use_tables else []
+        # 题注要先收集：表格/图的区分就靠它（Table N vs Figure N）
+        caps = []
+        for b in blocks:
+            cap_txt = " ".join(sp["text"] for ln in b["lines"] for sp in ln["spans"]).strip()
+            if re.match(r"^\s*(Table|Figure|Fig\.?|表|图)\s*\d", cap_txt, re.I):
+                caps.append({"bbox": b["bbox"], "text": cap_txt})
+        tables = _page_tables(page, body, caps) if use_tables else []
         for b in blocks:
             y0, y1 = b["bbox"][1], b["bbox"][3]
             txt = " ".join(sp["text"] for ln in b["lines"] for sp in ln["spans"]).strip()
@@ -485,7 +503,8 @@ def extract_pdf(path: str | Path, page_from: int | None = None,
 
         combined = list(kept) + [
             {"bbox": tb["bbox"], "is_table": True, "text": tb["md"],
-             "table": tb.get("table"), "lines": []}
+             "kind": tb["kind"], "table": tb.get("table"),
+             "algorithm": tb.get("algorithm"), "lines": []}
             for tb in tables
         ]
         ordered = _order_blocks(combined, rect.width)
@@ -493,7 +512,8 @@ def extract_pdf(path: str | Path, page_from: int | None = None,
         for b in ordered:
             if b.get("is_table"):
                 merged.append({"bbox": b["bbox"], "text": b["text"], "is_table": True,
-                               "table": b.get("table"),
+                               "kind": b.get("kind", "table"),
+                               "table": b.get("table"), "algorithm": b.get("algorithm"),
                                "math_ratio": mathify.math_coverage(b["text"]),
                                "size": body, "bold": False})
                 continue
@@ -527,15 +547,21 @@ def extract_pdf(path: str | Path, page_from: int | None = None,
         for b in merged:
             idx += 1
             if b.get("is_table"):
+                # 伪代码与表格都算"结构化块"，但**处理方式完全不同**：
+                # 伪代码按行保留（行号 + 缩进表达层级），绝不能网格化；
+                # 表格则要网格化才能表达跨列与列对齐。
+                is_alg = b.get("kind") == "algorithm" and b.get("algorithm")
                 paragraphs.append({
                     "id": f"p{idx:04d}", "page": pno, "page_end": pno,
-                    "kind": "table", "level": 0, "text": b["text"],
+                    "kind": "algorithm" if is_alg else "table", "level": 0,
+                    "text": b["text"],
                     "math_ratio": round(b["math_ratio"], 3),
                     "bbox": [round(v, 1) for v in b["bbox"]],
                     # 结构化网格：{columns, head_rows, rows:[[{text,span}|None]]}。
                     # 表格必须**整块**翻译（拆开翻会丢掉列对齐与表头对应），
                     # 渲染也靠它出真正的 <table>（markdown 表达不了跨列的表头）。
-                    **({"table": b["table"]} if b.get("table") else {}),
+                    **({"table": b["table"]} if (b.get("table") and not is_alg) else {}),
+                    **({"algorithm": b["algorithm"]} if is_alg else {}),
                 })
                 continue
             kind, level = _classify(b["text"], b["size"], body, b["bold"],

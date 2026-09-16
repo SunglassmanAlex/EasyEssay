@@ -100,6 +100,16 @@ class MockClient:
             # 第 3 次调用时故意丢掉中间一段，触发"部分缺失 → 单独重试"分支
             if self.calls == 3 and len(paras) >= 3 and i == 1:
                 continue
+            # 伪代码：按行返回，行数保持一致；只给注释/说明行加标记（模拟"只翻注释"）
+            alg = p.get("algorithm")
+            if isinstance(alg, dict) and alg.get("lines"):
+                lines = [str(x) for x in alg["lines"]]
+                out_lines = []
+                for ln in lines:
+                    keep = ln.strip().startswith(("1", "2", "3", "4", "5", "6", "7", "8", "9"))
+                    out_lines.append(ln if keep else (MOCK_TAG + ln))
+                items.append({"id": p.get("id"), "algorithm": {"lines": out_lines}})
+                continue
             # 表格：与真实模型一致，整表返回二维数组，行列数保持一致。
             # 表头也译（加前缀），数值/模型名原样保留。
             tbl = p.get("table")

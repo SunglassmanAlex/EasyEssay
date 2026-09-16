@@ -29,6 +29,11 @@ OUTPUT_SPEC = r"""
   按上下文还原成最可能的 LaTeX，**绝不在 zh 里保留 `⟦?⟧`**；
 - 若该段是纯公式（$$...$$），en 与 zh 都原样返回该公式，不要添加解释；
 - terms 只列该段的关键术语（最多 4 个，en/zh 对应），没有则给空数组 []；
+- **kind 为 `algorithm` 的段落是伪代码，按行处理**：输入给的是 `algorithm.lines`
+  （一行的列表，已保留行号与缩进）。返回 `"algorithm": {"lines": [译文行, ...]}`，
+  **行数与输入完全一致**，也不要返回 en/zh 字段；
+  只翻译注释（`//` 之后）、`Input:`/`Output:` 这类说明文字；
+  算法名、变量名、关键字（for/if/while/return）、运算符（←）、数字一律**保持原样**；
 - **kind 为 `table` 的段落要整表翻译**：输入给的是 `table.rows`（二维单元格数组）
   与 `table.columns`/`head_rows`。请返回 `"table": {"rows": [[译文, ...], ...]}`，
   **行列数与输入完全一致**（空的占位格保持为空），不要返回 en/zh 字段；
@@ -73,6 +78,11 @@ OUTPUT_SPEC_NO_RESTORE = r"""
   按上下文还原成最可能的 LaTeX，**绝不在 zh 里保留 `⟦?⟧`**；
 - 若该段是纯公式（$$...$$），zh 原样返回该公式，不要添加解释；
 - terms 只列该段的关键术语（最多 4 个，en/zh 对应），没有则给空数组 []；
+- **kind 为 `algorithm` 的段落是伪代码，按行处理**：输入给的是 `algorithm.lines`
+  （一行的列表，已保留行号与缩进）。返回 `"algorithm": {"lines": [译文行, ...]}`，
+  **行数与输入完全一致**，也不要返回 en/zh 字段；
+  只翻译注释（`//` 之后）、`Input:`/`Output:` 这类说明文字；
+  算法名、变量名、关键字（for/if/while/return）、运算符（←）、数字一律**保持原样**；
 - **kind 为 `table` 的段落要整表翻译**：输入给的是 `table.rows`（二维单元格数组）
   与 `table.columns`/`head_rows`。请返回 `"table": {"rows": [[译文, ...], ...]}`，
   **行列数与输入完全一致**（空的占位格保持为空），不要返回 en/zh 字段；
@@ -92,7 +102,7 @@ OUTPUT_SPEC_RESTORE = r"""
 - items 与输入段落一一对应，id 必须原样返回，顺序一致，不得遗漏；
 - 不要输出 zh 字段，不要翻译，不要增删或改写任何文字；
 - 若某段本来就很规范，en 原样返回即可；
-- **kind 为 `table` 的段落原样返回**，不要翻译、不要改动单元格。"""
+- **kind 为 `table` / `algorithm` 的段落原样返回**，不要翻译、不要改动单元格。"""
 
 
 def _chunk(paras: list[dict], batch_size: int, max_chars: int) -> list[list[dict]]:
@@ -161,6 +171,26 @@ def apply_table_rows(grid: dict, translated: Any) -> dict | None:
             "rows": out_rows}
 
 
+def algorithm_for_prompt(alg: dict) -> dict:
+    """伪代码给模型的形状：一行的列表（保序、保行数）。"""
+    return {"lines": [str(x) for x in (alg.get("lines") or [])]}
+
+
+def apply_algorithm_lines(alg: dict, translated: Any) -> dict | None:
+    """套回模型返回的伪代码。
+
+    **行数必须一致** —— 伪代码的结构就是"第几行是什么"，
+    行数对不上说明模型合并/漏掉了语句，此时宁可判为失败（交给补漏重试），也不要错位。
+    """
+    if not isinstance(translated, dict):
+        return None
+    lines = translated.get("lines")
+    src = alg.get("lines") or []
+    if not isinstance(lines, list) or len(lines) != len(src):
+        return None
+    return {"lines": ["" if x is None else str(x) for x in lines]}
+
+
 def _build_messages(batch: list[dict], system_prompt: str, target_lang: str,
                     glossary: list[list[str]], restore_original: bool) -> list[dict]:
     spec = OUTPUT_SPEC if restore_original else OUTPUT_SPEC_NO_RESTORE
@@ -184,7 +214,12 @@ def _build_messages(batch: list[dict], system_prompt: str, target_lang: str,
         if p.get("kind") == "table" and isinstance(grid, dict) and grid.get("rows"):
             # 表格整块下发：给二维数组而不是拍平的文本，列对齐才不会丢
             item["table"] = table_for_prompt(grid)
-        item["en"] = p["text"]
+        alg = p.get("algorithm")
+        if p.get("kind") == "algorithm" and isinstance(alg, dict) and alg.get("lines"):
+            # 伪代码按行下发：行号与缩进就是它的结构，绝不能拍平或网格化
+            item["algorithm"] = algorithm_for_prompt(alg)
+        else:
+            item["en"] = p["text"]
         payload["paragraphs"].append(item)
     if restore_original:
         payload["note"] = ("输入里的 en 是从 PDF 抽出的原文，数学内容可能是碎的；"
@@ -270,6 +305,19 @@ def _translate_batch(client: DeepSeekClient, batch: list[dict], settings: dict,
         if not pid:
             continue
         src = src_by_id.get(pid) or {}
+        alg = src.get("algorithm") if isinstance(src.get("algorithm"), dict) else None
+        if alg and alg.get("lines"):
+            zh_alg = apply_algorithm_lines(alg, it.get("algorithm"))
+            if zh_alg is None:
+                continue          # 行数不对 → 当作没返回，交给补漏/重试
+            rec_a: dict[str, Any] = {"zh": "\n".join(zh_alg["lines"]), "terms": terms,
+                                     "algorithm": zh_alg}
+            if restore:
+                rec_a["en"] = "\n".join(alg["lines"])
+                rec_a["en_algorithm"] = alg
+            out[pid] = rec_a
+            new_terms.extend(terms)
+            continue
         grid = src.get("table") if isinstance(src.get("table"), dict) else None
         # 表格段落：zh 由返回的二维数组拼出来，结构套回原网格（保留 span）
         if grid and grid.get("rows"):

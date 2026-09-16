@@ -93,9 +93,15 @@ setTimeout(() => {
   // 表格：必须是**真正的 <table>**，不是把单元格拍成一行文字
   let tblOk = true, tblNote = '（本文件无表格）';
   let dataTables = 0;
+  // 伪代码：必须**按行**渲染（行号与缩进是它的结构），而且绝不能被塞进表格
+  let dataAlg = 0, dataAlgLines = 0;
   try {
     const data = JSON.parse(d.getElementById('ee-doc-data').textContent);
     dataTables = (data.paragraphs || []).filter(p => p.kind === 'table').length;
+    const algs = (data.paragraphs || []).filter(p => p.kind === 'algorithm');
+    dataAlg = algs.length;
+    dataAlgLines = algs.reduce(
+      (n, p) => n + (((p.algorithm || {}).lines || []).length), 0);
   } catch (e) { /* 忽略 */ }
   if (dataTables > 0) {
     const boxes = d.querySelectorAll('.tblbox table');
@@ -110,6 +116,18 @@ setTimeout(() => {
       + '行数 ' + trs + '，跨列单元格 ' + spanned + '，含表格的段落行 ' + rowsPer.length;
   }
   if (!tblOk) problems.push('表格没有渲染成真正的 <table>（' + tblNote + '）');
+
+  let algOk = true, algNote = '（本文件无伪代码）';
+  if (dataAlg > 0) {
+    const boxes = d.querySelectorAll('.algobox');
+    const linesInDom = d.querySelectorAll('.algobox .algline').length;
+    const inTable = Array.from(d.querySelectorAll('.row[data-id]'))
+      .filter(n => n.querySelector('.algobox') && n.querySelector('table')).length;
+    algOk = boxes.length >= dataAlg && linesInDom >= dataAlgLines && inTable === 0;
+    algNote = '数据中 ' + dataAlg + ' 段（' + dataAlgLines + ' 行），渲染出 '
+      + boxes.length + ' 个伪代码块 / ' + linesInDom + ' 行；被塞进表格的 ' + inTable + ' 处';
+  }
+  if (!algOk) problems.push('伪代码没有按行渲染（' + algNote + '）');
 
 
   // 直接裸着晾出来跟乱码没区别 —— 必须换成带说明的小标记。
@@ -146,6 +164,7 @@ setTimeout(() => {
   console.log('原文/重建切换  :', rawOk ? 'OK' : 'FAIL');
   console.log('未知字形标记   :', glyphOk ? 'OK' : 'FAIL', glyphNote);
   console.log('表格渲染       :', tblOk ? 'OK' : 'FAIL', tblNote);
+  console.log('伪代码渲染     :', algOk ? 'OK' : 'FAIL', algNote);
   console.log('第1段英文       :', (en[0] ? en[0].textContent.trim().slice(0, 60) : ''));
   console.log('第1段中文       :', (zh[0] ? zh[0].textContent.trim().slice(0, 60) : ''));
   const withMath = Array.from(en).find(n => /\$[^$]+\$/.test(n.textContent));

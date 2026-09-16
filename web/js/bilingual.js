@@ -241,9 +241,36 @@
   // 注意：**不再渲染任何换页提示**。段落开头的页码（左栏的 p.5 / p.5–6）已经说明了
   // 它来自第几页、是否跨页；再在正文里插一行提示只是噪音（用户明确要求去掉）。
   // 所以这里连 page_break_at 都不再消费。
+  /**
+   * 伪代码/算法块：**按行**渲染，保留行号与缩进。
+   *
+   * 为什么不能走表格或普通段落：
+   *   - 表格会把每行拆成单元格（`1 V ← ep // set of visited nodes` 变成 5 个格子），
+   *     行号与缩进这一层结构就没了 —— 用户实测反馈过这一点；
+   *   - 普通段落会把连续几行并成一段，同样看不出循环层级。
+   * 所以每行一个 <div>、`white-space: pre` 保住前导空格。
+   */
+  function fillAlgorithmCell(cell, lines) {
+    if (!lines || !lines.length) return false;
+    var box = el('div', 'algobox');
+    for (var i = 0; i < lines.length; i++) {
+      var line = document.createElement('div');
+      line.className = 'algline';
+      // 用 textContent：伪代码里的 < > ← 等符号不该被当成 HTML/Markdown
+      line.textContent = lines[i];
+      box.appendChild(line);
+    }
+    cell.appendChild(box);
+    return true;
+  }
+
   function fillCell(cell, para, kind) {
     var text = para.text || '';
     if (kind === 'table' && para.table && fillTableCell(cell, para.table)) return;
+    if (kind === 'algorithm') {
+      var lines = (para.algorithm && para.algorithm.lines) || String(text).split('\n');
+      if (fillAlgorithmCell(cell, lines)) return;
+    }
     if (kind === 'equation') { fillEquationCell(cell, text); return; }
     md.richInto(cell, text);
   }
@@ -349,16 +376,18 @@
       // 左栏优先用「重建原文」；可一键切回 PDF 直抽
       var rebuilt = typeof tr.en === 'string' && tr.en.trim() && tr.en !== p.text;
       if (rebuilt) {
-        fillCell(en, { kind: kind, text: state.showRaw ? p.text : tr.en, table: p.table }, kind);
+        fillCell(en, { kind: kind, text: state.showRaw ? p.text : tr.en, table: p.table,
+                    algorithm: (state.showRaw ? p.algorithm : (tr.en_algorithm || p.algorithm)) }, kind);
         en.dataset.rebuilt = '1';
         en.title = '左栏为「重建原文」（公式已还原为标准 LaTeX）。点顶栏「原始抽取」可切回 PDF 直抽的原始文本。';
-        switches.push({ cell: en, para: p, fixed: tr.en, table: p.table });
+        switches.push({ cell: en, para: p, fixed: tr.en, table: p.table,
+                       algorithm: tr.en_algorithm || p.algorithm });
       } else {
         fillCell(en, p, kind);
       }
 
       if (tr.zh) {
-        fillCell(zh, { kind: kind, text: tr.zh, table: tr.table }, kind);
+        fillCell(zh, { kind: kind, text: tr.zh, table: tr.table, algorithm: tr.algorithm }, kind);
         if (tr.terms && tr.terms.length) {
           highlightTerms(en, tr.terms, 'en');
           highlightTerms(zh, tr.terms, 'zh');
@@ -405,7 +434,8 @@
           if (state.showRaw) {
             fillCell(s.cell, s.para, s.para.kind || 'text');
           } else {
-            fillCell(s.cell, { kind: s.para.kind, text: s.fixed, table: s.table }, s.para.kind || 'text');
+            fillCell(s.cell, { kind: s.para.kind, text: s.fixed, table: s.table,
+                           algorithm: s.algorithm }, s.para.kind || 'text');
           }
         });
         if (switches.length) typeset(wrap, function () { markMissingGlyphs(wrap); });

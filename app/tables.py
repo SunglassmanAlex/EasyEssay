@@ -25,6 +25,24 @@ PyMuPDF 的 `find_tables(strategy="lines")` 要求"闭合单元格"，对这种�
 5. **行距并逻辑行**：一行文字可能占多个物理行（窄列里标题换行），
    行距 ≤ 0.8×字号 视为同一逻辑行（实测同一行 0.55×，相邻行 1.1×）。
 
+## 表格 vs 伪代码 vs 图：怎么区分（2026-09-16 补）
+
+初版只看"两条等宽横线夹内容"，结果把三类东西都当成了表格（用户实测反馈）：
+
+| 误判 | 真相 | 判据 |
+|---|---|---|
+| `Algorithm 1: SEARCH(...)` | **伪代码**（`algorithm` 环境上下各一条 `\\hrule`） | 见 `pseudocode_score` |
+| 一段安全证明正文 | **正文**（被列槽切成 12 列） | 挂的是 `Figure` 题注 → 丢弃 |
+| `efn:[1,128]` `0.04 0.02` | **图的坐标轴刻度与图例** | 无 Table 题注 / `Figure` 题注 |
+
+**最可靠的判据是题注**：论文里真表格一定配 `Table N:`，图配 `Figure N:`。
+实测一次就把 7 个误判全部摘掉、7 个真表格全部保留（见 `_caption_kind`）。
+不确定的一律**丢弃**（不是硬塞进表格）—— 丢弃后该区域的正文不再被抑制，
+会作为普通段落抽出来，这正是我们想要的。
+
+伪代码有**自己的处理**（`algorithm_lines`）：按物理行保留行号与缩进，
+绝不网格化 —— 伪代码靠"一行一条语句 + 缩进层级"表达结构，拆成单元格就没法读。
+
 ## 已知边界（如实说明）
 
 * `\\multirow`（跨行单元格）不支持：单元格竖直居中，会并进相邻行，
@@ -40,6 +58,14 @@ _ROW_GAP_RATIO = 0.8        # 行距小于 0.8×字号 → 同一逻辑行的续
 _MIN_RULE_WIDTH = 30.0      # 太短的线段不算横线
 _MIN_RULE_COUNT = 2         # 至少两条横线才可能是表格
 _MIN_TABLE_HEIGHT = 15.0
+
+# 伪代码关键字（用于把 algorithm 环境从表格候选里摘出来）
+_PSEUDO_KEYWORDS = ("for", "foreach", "while", "if", "then", "do", "return",
+                    "elif", "else", "←", "<-")
+
+# 题注首词：Table N: / Figure N:（也认中文"表/图"）
+_TABLE_CAPTION_RE = re.compile(r"^\s*(Table|TABLE|表)\s*\d", re.I)
+_FIGURE_CAPTION_RE = re.compile(r"^\s*(Figure|Fig\.?|FIGURE|图)\s*\d", re.I)
 
 
 # --------------------------------------------------------------- 几何基础
@@ -309,7 +335,8 @@ def grid_to_text(table: dict) -> str:
     return "\n".join(out)
 
 
-def _ruled_tables(page: Any, taken: list[dict]) -> list[dict]:
+def _ruled_tables(page: Any, taken: list[dict],
+                  captions: list[dict] | None = None) -> list[dict]:
     """兜底：**带框线**的表格交给 PyMuPDF 的 `lines` 策略。
 
     上面那套"等宽横线"只认 booktabs（顶/中/底三条横线）。但表格也可能是**每个单元格
@@ -318,6 +345,10 @@ def _ruled_tables(page: Any, taken: list[dict]) -> list[dict]:
     对这种表 `find_tables(strategy="lines")` 反而很好用，所以两条路都留着。
 
     与已识别的区域重叠时跳过，避免同一张表抽两遍。
+
+    ⚠️ 这条路也必须过题注判据：**图的坐标轴 + 网格线本身就会围出一堆闭合单元格**，
+    `lines` 策略会把整张折线图当表格（实测 Compass 的 Figure 7 就这么漏过来的）。
+    所以挂 `Figure N` 题注的一律不要。
     """
     try:
         finder = page.find_tables(strategy="lines")
@@ -333,6 +364,10 @@ def _ruled_tables(page: Any, taken: list[dict]) -> list[dict]:
         if any(_rects_overlap(bbox, other["bbox"]) for other in taken) or \
                 any(_rects_overlap(bbox, other["bbox"]) for other in out):
             continue
+        if captions:
+            cap_reg = {"x0": bbox[0], "x1": bbox[2], "ys": [bbox[1], bbox[3]]}
+            if _caption_kind(captions, cap_reg) == "figure":
+                continue        # 坐标轴网格围出的"假表格"
         rows: list[list[Any]] = []
         for r in raw or []:
             cells = [{"text": re.sub(r"\s+", " ", str(c or "")).strip(), "span": 1}
@@ -343,7 +378,7 @@ def _ruled_tables(page: Any, taken: list[dict]) -> list[dict]:
             continue
         columns = max(len(r) for r in rows)
         rows = [r + [{"text": "", "span": 1}] * (columns - len(r)) for r in rows]
-        out.append({"bbox": bbox,
+        out.append({"bbox": bbox, "kind": "table", "note": "框线表格",
                     "table": {"columns": columns, "head_rows": 1, "rows": rows}})
     return out
 
@@ -352,16 +387,128 @@ def _rects_overlap(a: tuple, b: tuple) -> bool:
     return not (a[2] <= b[0] or b[2] <= a[0] or a[3] <= b[1] or b[3] <= a[1])
 
 
-def extract_tables(page: Any, size: float = 10.0) -> list[dict]:
-    """抽取本页表格 → [{bbox, table}]，table = {columns, head_rows, rows}。
+def pseudocode_score(region: dict, page: Any, size: float = 10.0) -> tuple[int, list[str]]:
+    """判断这块"横线夹着的东西"是不是**伪代码/算法**（返回分值 + 依据）。
 
-    两条路：booktabs（等宽横线）自己重建；带框线的交给 PyMuPDF。
+    为什么必须单独判：LaTeX 的 `algorithm` 环境上下各一条 `\\hrule`，
+    看起来和 booktabs 表格一模一样（都是"两条等宽横线夹内容"）。
+    实测用户论文里的 `Algorithm 1: SEARCH(...)` 就这么被当成了 5 列表格，
+    行号、缩进全被拆成单元格 —— 用户原话"这个是伪代码，你为什么要把它放表格里？"
+
+    判据（实测分离度很好：伪代码块得分 8，其它候选最高 2）：
+      * 开头出现 `Algorithm` 标题
+      * 多行以行号开头（`1`、`2`、`…`）
+      * 出现伪代码关键字（for/foreach/while/if/then/do/return/…）
+      * 同时有 `Input:` 与 `Output:`
+    """
+    lines = _physical_lines(_words_in(page, region), size)
+    texts = [" ".join(w["t"] for w in ln["words"]) for ln in lines]
+    joined = " ".join(texts).lower()
+    score, why = 0, []
+    if "algorithm" in joined[:80]:
+        score += 3
+        why.append("有 Algorithm 标题")
+    numbered = sum(1 for t in texts if t.strip()[:3].strip().isdigit())
+    if numbered >= 3:
+        score += 2
+        why.append(f"{numbered} 行以行号开头")
+    hits = [k for k in _PSEUDO_KEYWORDS if k in joined]
+    if len(hits) >= 3:
+        score += 2
+        why.append(f"{len(hits)} 个伪代码关键字")
+    if "input:" in joined and "output:" in joined:
+        score += 1
+        why.append("有 Input/Output")
+    return score, why
+
+
+def algorithm_lines(page: Any, region: dict, size: float = 10.0) -> list[str]:
+    """把伪代码块按**物理行**取出来，保留行号与缩进。
+
+    表格的网格化在这里是有害的：伪代码靠"一行一条语句 + 缩进层级"表达结构，
+    拆成单元格就没法读了。所以这里只按行拼接，并按左边界换算成前导空格。
+    """
+    lines = _physical_lines(_words_in(page, region), size)
+    if not lines:
+        return []
+    left = min(ln["words"][0]["x0"] for ln in lines if ln["words"])
+    char_w = max(2.0, size * 0.5)     # 估一个字符宽，用来把缩进换算成空格数
+    out: list[str] = []
+    for ln in lines:
+        if not ln["words"]:
+            continue
+        indent = int(max(0.0, (ln["words"][0]["x0"] - left)) / char_w + 0.5)
+        out.append(" " * indent + " ".join(w["t"] for w in ln["words"]))
+    return out
+
+
+def _caption_kind(captions: list[dict] | None, region: dict) -> str | None:
+    """区域上下 40pt 内有没有题注，是 Table 还是 Figure。
+
+    这是**最可靠的判据**：论文里真表格一定有 `Table N:` 题注，
+    而图（含坐标轴网格线、散落的刻度标签）挂的是 `Figure N:`。
+    实测用它一次就把 7 个误判（正文/图表刻度）全部摘掉，7 个真表格全部保留。
+    """
+    if not captions:
+        return None
+    top, bot = region["ys"][0], region["ys"][-1]
+    x0, x1 = region["x0"], region["x1"]
+    for cap in captions:
+        cy = cap["bbox"][1]
+        if not ((top - 40 <= cy <= top + 4) or (bot - 4 <= cy <= bot + 40)):
+            continue
+        if cap["bbox"][2] < x0 or cap["bbox"][0] > x1:      # 横向也要有交集
+            continue
+        text = (cap.get("text") or "").strip()
+        if _TABLE_CAPTION_RE.match(text):
+            return "table"
+        if _FIGURE_CAPTION_RE.match(text):
+            return "figure"
+    return None
+
+
+def _looks_like_table(grid: dict, limit_cols: int = 8) -> bool:
+    """没有题注时的严格回退：列数适中、行数够、格子填得比较满。
+
+    用来放行"有表格但没有 Table 题注"的情况（例如附录里的表），
+    同时挡住被切碎的正文（那种往往列数很多、空格子很多）。
+    """
+    columns = int(grid.get("columns") or 0)
+    rows = grid.get("rows") or []
+    if not (2 <= columns <= limit_cols) or len(rows) < 2:
+        return False
+    cells = [c for r in rows for c in r if isinstance(c, dict)]
+    filled = sum(1 for c in cells if (c.get("text") or "").strip())
+    return bool(cells) and filled / len(cells) >= 0.55
+
+
+def extract_tables(page: Any, size: float = 10.0,
+                   captions: list[dict] | None = None) -> list[dict]:
+    """抽取本页的结构化块 → [{bbox, kind, table|algorithm, note}]。
+
+    - `kind="table"`：{columns, head_rows, rows}
+    - `kind="algorithm"`：{lines}（伪代码，保留行号与缩进）
+    - 判定不确定的直接**丢弃**（返回里没有它），这样该区域的正文不会被抑制，
+      仍会作为普通段落抽出来 —— 比硬塞进表格里好。
     """
     out: list[dict] = []
     for reg in table_regions(page):
         words = _words_in(page, reg)
         if len(words) < 4:
             continue
+        bbox_full = (reg["x0"], reg["ys"][0], reg["x1"], reg["ys"][-1])
+        score, why = pseudocode_score(reg, page, size)
+        if score >= 4:
+            lines = algorithm_lines(page, reg, size)
+            if len(lines) >= 3:
+                out.append({"bbox": bbox_full, "kind": "algorithm",
+                            "algorithm": {"lines": lines},
+                            "note": "伪代码：" + "、".join(why)})
+                continue
+        cap_kind = _caption_kind(captions, reg)
+        if cap_kind == "figure":
+            continue        # 挂 Figure 题注 → 是图，交给普通段落
+
         lines = _physical_lines(words, size)
         if not lines:
             continue
@@ -390,8 +537,10 @@ def extract_tables(page: Any, size: float = 10.0) -> list[dict]:
         if len(grid) < 2:
             continue
         table = {"columns": columns, "head_rows": head_count, "rows": grid}
-        out.append({"bbox": (reg["x0"], ys[0] + 2.0, reg["x1"], ys[-1] - 2.0),
-                    "table": table})
-    out.extend(_ruled_tables(page, out))
+        if cap_kind != "table" and not _looks_like_table(table):
+            continue        # 既没 Table 题注、结构又不像表格 → 丢给普通段落
+        out.append({"bbox": bbox_full, "kind": "table", "table": table,
+                    "note": "有 Table 题注" if cap_kind == "table" else "结构判定"})
+    out.extend(_ruled_tables(page, out, captions))
     out.sort(key=lambda t: (t["bbox"][1], t["bbox"][0]))
     return out
