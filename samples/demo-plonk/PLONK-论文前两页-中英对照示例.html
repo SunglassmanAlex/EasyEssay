@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>PLONK：基于拉格朗日基置换的通用非交互知识论证 — EasyEssay 中英对照</title>
+<title>PlonK : Permutations over Lagrange-bases for Oecumenical Noninteractive arguments of Knowledge — EasyEssay 中英对照</title>
 <style>
 /* ==========================================================================
    EasyEssay · 论文对照阅读样式
@@ -283,12 +283,31 @@ a:hover { text-decoration: underline; }
 
 /* 公式 */
 .eq {
+  display: block;
   margin: 10px 0;
   padding: 9px 6px;
   background: var(--eqbg);
   border-radius: 6px;
   overflow-x: auto;
   text-align: center;
+}
+
+/* 认不出的字形（后台占位符 ⟦?⟧）。
+   刻意做得像"一个明确的提示"而不是"乱码"：虚线框 + 强调色 + tooltip 说明。
+   渲染时只在 MathJax 排版完成后替换，且跳过公式内部（见 bilingual.js）。 */
+.glyph-missing {
+  display: inline-block;
+  margin: 0 2px;
+  padding: 0 5px;
+  border: 1px dashed var(--accent);
+  border-radius: 4px;
+  font-size: .86em;
+  font-style: normal;
+  color: var(--accent);
+  background: transparent;
+  cursor: help;
+  white-space: nowrap;
+  vertical-align: baseline;
 }
 .eq-tag { text-align: center; font-size: 13px; color: var(--muted); }
 mjx-container { max-width: 100%; }
@@ -495,7 +514,7 @@ body.dark .ee-msg.err .bubble { color: #fca5a5; }
 <header class="ee-topbar">
   <div class="ee-topbar-left">
     <span class="ee-logo">EasyEssay</span>
-    <span class="ee-doc-title" title="PLONK：基于拉格朗日基置换的通用非交互知识论证">PLONK：基于拉格朗日基置换的通用非交互知识论证</span>
+    <span class="ee-doc-title" title="PlonK : Permutations over Lagrange-bases for Oecumenical Noninteractive arguments of Knowledge">PlonK : Permutations over Lagrange-bases for Oecumenical Noninteractive arguments of Knowledge</span>
     <span class="ee-note">共 24 段，已译 24 段</span>
   </div>
   <div class="ee-topbar-actions">
@@ -528,7 +547,7 @@ window.MathJax = {
 window.EASYESSay_API = "http://127.0.0.1:8765";
 window.EASYESSay_STANDALONE = true;
 </script>
-<script src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-svg.js" onerror="(function(){var s=document.createElement('script');s.src='./vendor/mathjax/tex-svg.js';document.head.appendChild(s);})()"></script>
+<script src="./vendor/mathjax/tex-svg.js" onerror="(function(){var s=document.createElement('script');s.src='https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-svg.js';document.head.appendChild(s);})()"></script>
 <script>
 /* EasyEssay · 轻量 Markdown + LaTeX 渲染
    要点：数学片段先切分再转义，保证 $...$ 内容原样交给 MathJax。 */
@@ -702,18 +721,28 @@ window.EASYESSay_STANDALONE = true;
     }
   };
 
-  function typeset(root) {
+  function typeset(root, after) {
+    // `after` 在排版真正跑完之后调用一次。必须等排版完再动 DOM ——
+    // 往 `$...$` 中间插元素会把公式切成两半（见 markMissingGlyphs）。
+    var fired = false;
+
+    function done() {
+      if (fired) return;
+      fired = true;
+      if (after) { try { after(); } catch (e) { } }
+    }
+
     function attempt() {
       var MJ = global.MathJax;
       if (!MJ) return false;
       if (MJ.startup && MJ.startup.promise) {
         MJ.startup.promise.then(function () {
-          try { MJ.typesetPromise([root]).catch(function () { }); } catch (e) { }
-        }).catch(function () { });
+          try { MJ.typesetPromise([root]).then(done).catch(done); } catch (e) { done(); }
+        }).catch(done);
         return true;
       }
       if (typeof MJ.typesetPromise === 'function') {
-        try { MJ.typesetPromise([root]).catch(function () { }); return true; } catch (e) { return false; }
+        try { MJ.typesetPromise([root]).then(done).catch(done); return true; } catch (e) { return false; }
       }
       return false;
     }
@@ -721,8 +750,67 @@ window.EASYESSay_STANDALONE = true;
     var tries = 0;
     var timer = setInterval(function () {
       tries += 1;
-      if (attempt() || tries > 66) clearInterval(timer);
+      if (attempt() || tries > 66) {
+        clearInterval(timer);
+        if (tries > 66) done();   // MathJax 起不来也要把标记打上
+      }
     }, 150);
+  }
+
+  /**
+   * 把 ⟦?⟧ 换成看得懂的标记。
+   *
+   * 它是"PDF 字体表损坏、这个字形认不出来"的占位符（见 app/mathify.py）。
+   * 裸着晾出来跟乱码没区别 —— 用户第一反应就是"你这识别怎么全是乱码"。
+   * 这里包一层带 tooltip 的小标记，让它是"一个明确的提示"而不是"乱码"。
+   *
+   * 只在排版**之后**调用，且跳过 MathJax 生成的 mjx-container ——
+   * 公式内部的字符由 MathJax 自己画，往里插元素会破坏公式。
+   */
+  function markMissingGlyphs(root) {
+    if (!root || !document.createTreeWalker) return 0;
+    var GL = '\u27e6?\u27e7';        // ⟦?⟧
+
+    function insideMath(node) {
+      var p = node.parentNode;
+      while (p && p !== root) {
+        var tag = (p.tagName || '').toLowerCase();
+        if (tag === 'mjx-container' || tag === 'mjx-assistive-mml') return true;
+        var cls = p.className;
+        if (typeof cls === 'string' && (cls.indexOf('mjx') >= 0 || cls.indexOf('MathJax') >= 0)) {
+          return true;
+        }
+        p = p.parentNode;
+      }
+      return false;
+    }
+
+    var walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, {
+      acceptNode: function (node) {
+        if (!node.nodeValue || node.nodeValue.indexOf(GL) < 0) return NodeFilter.FILTER_SKIP;
+        return insideMath(node) ? NodeFilter.FILTER_SKIP : NodeFilter.FILTER_ACCEPT;
+      }
+    }, false);
+
+    var targets = [];
+    var n;
+    while ((n = walker.nextNode())) targets.push(n);
+    targets.forEach(function (node) {
+      var parts = node.nodeValue.split(GL);
+      var frag = document.createDocumentFragment();
+      parts.forEach(function (seg, i) {
+        if (i) {
+          var s = el('span', 'glyph-missing', '字形?');
+          s.title = 'PDF 的字体表损坏了，这个字形认不出来 —— 不是乱码，也不是识别错误。'
+            + '它多半是个大括号或大型运算符；已交给 AI 按上下文还原：'
+            + '切到顶栏「重建后」看结果，若仍是这个样子，可点「修复公式段」重试。';
+          frag.appendChild(s);
+        }
+        if (seg) frag.appendChild(document.createTextNode(seg));
+      });
+      if (node.parentNode) node.parentNode.replaceChild(frag, node);
+    });
+    return targets.length;
   }
 
   // ------------------------------------------------------------ 术语高亮
@@ -967,7 +1055,7 @@ window.EASYESSay_STANDALONE = true;
     var api = {
       state: state,
       toc: toc,
-      typeset: function () { typeset(wrap); },
+      typeset: function () { typeset(wrap, function () { markMissingGlyphs(wrap); }); },
       setViewMode: function (mode) {
         state.viewMode = mode;
         container.classList.toggle('view-en', mode === 'en');
@@ -990,7 +1078,7 @@ window.EASYESSay_STANDALONE = true;
             fillCell(s.cell, { kind: s.para.kind, text: s.fixed }, s.para.kind || 'text', null);
           }
         });
-        if (switches.length) typeset(wrap);
+        if (switches.length) typeset(wrap, function () { markMissingGlyphs(wrap); });
         return state.showRaw;
       },
       setScale: function (scale) {
@@ -1015,14 +1103,15 @@ window.EASYESSay_STANDALONE = true;
         Object.keys(rowMap).forEach(function (k) { rowMap[k].classList.remove('active'); });
         if (rowMap[paraId]) rowMap[paraId].classList.add('active');
       },
-      rows: rowMap
+      rows: rowMap,
+      markMissingGlyphs: function () { return markMissingGlyphs(wrap); }
     };
 
     api.setViewMode(state.viewMode);
     if (state.hideRefs) container.classList.add('hide-refs');
     api.setScale(state.scale);
     if (store.get('ee-font') === 'sans') document.body.classList.add('ee-sans');
-    typeset(wrap);
+    typeset(wrap, function () { markMissingGlyphs(wrap); });
     if (opts.onAsk) attachSelection(container, opts.onAsk);
     if (opts.themeToggle !== false) {
       var tgl = el('button', 'tgl', '切换深/浅色');
@@ -1380,18 +1469,21 @@ window.EASYESSay_STANDALONE = true;
 })(window);
 
 </script>
-<script id="ee-doc-data" type="application/json">{"id": "20260915-180522-plonk-ec26", "title": "PLONK：基于拉格朗日基置换的通用非交互知识论证", "paragraphs": [{"id": "p0001", "page": 1, "page_end": 1, "kind": "text", "level": 0, "text": "PlonK : Permutations over Lagrange-bases for Oecumenical Noninteractive arguments of Knowledge", "math_ratio": 0.0, "bbox": [106.0, 142.0, 489.4, 203.3]}, {"id": "p0002", "page": 1, "page_end": 1, "kind": "text", "level": 0, "text": "Ariel Gabizon$^{*}$ Zachary J. Williamson Oana Ciobotaru Aztec Aztec Pi Squared", "math_ratio": 0.087, "bbox": [132.7, 237.4, 462.6, 267.4]}, {"id": "p0003", "page": 1, "page_end": 1, "kind": "text", "level": 0, "text": "July 17, 2025", "math_ratio": 0.0, "bbox": [263.6, 279.3, 331.7, 291.2]}, {"id": "p0004", "page": 1, "page_end": 1, "kind": "abstract", "level": 0, "text": "Abstract zk-SNARK constructions that utilize an updatable universal structured reference string remove one of the main obstacles in deploying zk-SNARKs[GKM$^{+}$]. The important work of Maller et al. [MBKM] presented Sonic - the first potentially practical zk-SNARK with fully succinct verification for general arithmetic circuits with such an SRS. However, the version of Sonic enabling fully succinct verification still requires relatively high proof construction overheads. We present a universal SNARK construction with fully succinct verification, and significantly lower prover running time (roughly 7.5-20 times fewer group exponentiations than [MBKM] in the fully succinct verifier mode depending on circuit structure).", "math_ratio": 0.01, "bbox": [275.7, 333.1, 478.8, 456.8]}, {"id": "p0005", "page": 1, "page_end": 1, "kind": "text", "level": 0, "text": "Similarly to [MBKM] we rely on a permutation argument based on Bayer and Groth [BG12]. However, we focus on “Evaluations on a subgroup rather than coefficients of monomials”; which enables simplifying both the permutation argument and the arithmetization step.", "math_ratio": 0.0, "bbox": [116.6, 458.8, 478.8, 504.7]}, {"id": "p0006", "page": 1, "page_end": 1, "kind": "heading", "level": 1, "text": "1 Introduction", "math_ratio": 0.0, "bbox": [89.3, 525.7, 181.9, 540.0]}, {"id": "p0007", "page": 1, "page_end": 1, "kind": "text", "level": 0, "text": "Due to real-world deployments of zk-SNARKs, it has become of significant interest to have the structured reference string (SRS) be constructible in a “universal and updatable” fashion. Meaning that the same SRS can be used for statements about all circuits of a certain bounded size; and that at any point in time the SRS can be updated by a new party, such that the honesty of only one party from all updaters up to that point is required for soundness. For brevity, let us call a zk-SNARK with such a setup process universal.", "math_ratio": 0.0, "bbox": [89.3, 552.7, 506.1, 644.9]}, {"id": "p0008", "page": 1, "page_end": 1, "kind": "text", "level": 0, "text": "For the purpose of this introduction, let us say a zk-SNARK for circuit satisfiability is fully succinct if", "math_ratio": 0.0, "bbox": [89.3, 647.5, 506.0, 672.0]}, {"id": "p0009", "page": 1, "page_end": 1, "kind": "text", "level": 0, "text": "\\* Most of this work was done while the first author was working at Protocol Labs.", "math_ratio": 0.0, "bbox": [101.7, 679.0, 431.4, 691.3]}, {"id": "p0010", "page": 2, "page_end": 2, "kind": "text", "level": 0, "text": "1. The preprocessing$^{1}$ phase/SRS generation run time is quasilinear in circuit size.", "math_ratio": 0.0, "bbox": [102.6, 99.5, 498.4, 114.4]}, {"id": "p0011", "page": 2, "page_end": 2, "kind": "text", "level": 0, "text": "2. The prover run time is quasilinear in circuit size.", "math_ratio": 0.0, "bbox": [102.6, 125.8, 350.3, 136.7]}, {"id": "p0012", "page": 2, "page_end": 2, "kind": "text", "level": 0, "text": "3. The proof length is logarithmic$^{2}$ in circuit size.", "math_ratio": 0.0, "bbox": [102.6, 144.1, 340.9, 159.0]}, {"id": "p0013", "page": 2, "page_end": 2, "kind": "text", "level": 0, "text": "4. The verifier run time is polylogarithmic in circuit size.$^{3}$", "math_ratio": 0.0, "bbox": [102.6, 168.7, 380.5, 181.3]}, {"id": "p0014", "page": 2, "page_end": 2, "kind": "text", "level": 0, "text": "Maller et al. [MBKM] constructed for the first time a universal fully succinct zk- SNARK for circuit satisfiability, called Sonic.", "math_ratio": 0.0, "bbox": [89.3, 195.2, 506.0, 219.7]}, {"id": "p0015", "page": 2, "page_end": 2, "kind": "text", "level": 0, "text": "[MBKM] also give a version of Sonic with dramatically improved prover run time, at the expense of efficient verification only in a certain amortized sense.", "math_ratio": 0.0, "bbox": [89.3, 222.3, 506.0, 246.8]}, {"id": "p0016", "page": 2, "page_end": 2, "kind": "heading", "level": 2, "text": "1.1 Our results", "math_ratio": 0.0, "bbox": [89.3, 264.2, 169.6, 276.1]}, {"id": "p0017", "page": 2, "page_end": 2, "kind": "text", "level": 0, "text": "In this work we give a universal fully-succinct zk-SNARK with significantly improved prover run time compared to fully-succinct Sonic.", "math_ratio": 0.0, "bbox": [89.3, 285.6, 506.0, 310.0]}, {"id": "p0018", "page": 2, "page_end": 2, "kind": "text", "level": 0, "text": "At a high level our improvements stem from a more direct arithmetization of a circuit as compared to the [BCC$^{+}$ 16]-inspired arithmetization of [MBKM]. This is combined with a permutation argument over univariate evaluations on a multiplicative subgroup rather than over coefficients of a bivariate polynomial as in [MBKM].", "math_ratio": 0.004, "bbox": [89.3, 312.7, 506.1, 364.2]}, {"id": "p0019", "page": 2, "page_end": 2, "kind": "text", "level": 0, "text": "In a nutshell, one reason multiplicative subgroups are useful is that several protocols, including Sonic , use a permutation argument based on Bayer and Groth [BG12]. Ultimately, in the “grand product argument”, this reduces to checking relations between coefficients of polynomials at “neighbouring monomials”.", "math_ratio": 0.0, "bbox": [89.3, 366.9, 506.0, 418.4]}, {"id": "p0020", "page": 2, "page_end": 2, "kind": "text", "level": 0, "text": "We observe that if we think of the points$x,$ g$\\cdot x$ as neighbours, where g is a generator of a multiplicative subgroup of a field F , it is very convenient to check relations between different polynomials at such pairs of points.", "math_ratio": 0.0, "bbox": [89.3, 420.9, 506.0, 459.1]}, {"id": "p0021", "page": 2, "page_end": 2, "kind": "text", "level": 0, "text": "A related convenience is that multiplicative subgroups interact well with Lagrange bases. For example, suppose$H \\subset F$ is a multiplicative subgroup of order$n$ , and$x\\in H$. The polynomial$L _{x}$ of degree$n-$ 1 that vanishes on$H \\backslash \\{x \\}$ and has$L_{x}$($x$ )$=$ 1, has a very sparse representation of the form $L_{x}$($X ) = c^{x}$($X^{n}-$ 1) ($X - x$ )$,$ for a constant c$_{x}$ . This is beneficial when constructing an efficiently verifiable [BG12]- style permutation argument in terms of polynomial identities.", "math_ratio": 0.225, "bbox": [89.3, 461.7, 506.0, 585.5]}, {"id": "p0022", "page": 2, "page_end": 2, "kind": "text", "level": 0, "text": "1 We use the term SNARK in this paper for what is sometimes called a “SNARK with preprocessing”(see e.g. [GGPR13]) where one allows a one-time verifier computation that is polynomial rather than polylogarithmic in the circuit size. In return, the SNARK is expected to work for all non-uniform circuits , rather than only statements about uniform computation.", "math_ratio": 0.0, "bbox": [89.3, 594.2, 506.1, 637.5]}, {"id": "p0023", "page": 2, "page_end": 2, "kind": "text", "level": 0, "text": "2 From a theoretical point of view, polylogarithmic proof length is more natural; but logarithmic nicely captures recent constructions with a constant number of group elements, and sometimes is a good indication of the “practicality barrier”.", "math_ratio": 0.0, "bbox": [89.3, 638.0, 506.1, 670.4]}, {"id": "p0024", "page": 2, "page_end": 2, "kind": "text", "level": 0, "text": "3 In many definitions, only proof size is required to be polylogarithmic. For example, in the terminology of [GGPR13], additionally requiring polylogarithmic verifier run time means the SNARK is unsubtle.", "math_ratio": 0.0, "bbox": [89.3, 670.9, 506.1, 692.3]}], "translations": {"p0001": {"zh": "PlonK：基于拉格朗日基置换的通用非交互知识论证", "terms": []}, "p0002": {"zh": "Ariel Gabizon$^{*}$　Zachary J. Williamson　Oana Ciobotaru　（所属机构：Aztec、Aztec、Pi Squared）", "terms": [], "en": "Ariel Gabizon$^{*}$　Zachary J. Williamson　Oana Ciobotaru　—　Aztec · Aztec · Pi Squared"}, "p0003": {"zh": "2025 年 7 月 17 日", "terms": []}, "p0004": {"zh": "利用可更新通用结构化参考串（structured reference string, SRS）的 zk-SNARK 方案，消除了部署 zk-SNARK 的主要障碍之一 [GKM$^{+}$]。Maller 等人的重要工作 [MBKM] 给出了 Sonic —— 首个在具有此类 SRS 的通用算术电路上、具备完全简洁（fully succinct）验证且具备实用潜力的 zk-SNARK。然而，那个能够实现完全简洁验证的 Sonic 版本，其证明构造开销仍然相对偏高。本文给出一种通用 SNARK 构造，具备完全简洁验证，且证明者运行时间显著降低（在完全简洁验证模式下，依据电路结构不同，群指数运算次数约为 [MBKM] 的 1/7.5 至 1/20）。", "terms": [{"en": "structured reference string, SRS", "zh": "结构化参考串"}, {"en": "zk-SNARK", "zh": "零知识简洁非交互式知识论证"}, {"en": "fully succinct", "zh": "完全简洁"}], "en": "Abstract. zk-SNARK constructions that utilize an updatable universal structured reference string remove one of the main obstacles in deploying zk-SNARKs [GKM$^{+}$]. The important work of Maller et al. [MBKM] presented Sonic — the first potentially practical zk-SNARK with fully succinct verification for general arithmetic circuits with such an SRS. However, the version of Sonic enabling fully succinct verification still requires relatively high proof construction overheads. We present a universal SNARK construction with fully succinct verification, and significantly lower prover running time (roughly $7.5$–$20$ times fewer group exponentiations than [MBKM] in the fully succinct verifier mode, depending on circuit structure)."}, "p0005": {"zh": "与 [MBKM] 类似，我们依赖基于 Bayer 和 Groth [BG12] 的置换论证（permutation argument）。不同之处在于，我们关注的是「在子群上取值的求值形式，而非单项式系数」；这使得置换论证与算术化（arithmetization）步骤都能得到简化。", "terms": [{"en": "permutation argument", "zh": "置换论证"}, {"en": "arithmetization", "zh": "算术化"}]}, "p0006": {"zh": "1　引言", "terms": []}, "p0007": {"zh": "由于 zk-SNARK 已在真实场景中部署，如何让结构化参考串（SRS）以「通用且可更新」的方式构造出来，已成为一个备受关注的问题。其含义是：同一个 SRS 可用于关于某个有界规模内所有电路的陈述；并且在任意时刻，SRS 都可以被新的参与方更新，只要截至该时刻的全部更新者中有一个是诚实的，可靠性（soundness）即可成立。为简洁起见，我们把具有这种设置过程的 zk-SNARK 称为通用的。", "terms": [{"en": "soundness", "zh": "可靠性"}, {"en": "universal", "zh": "通用的"}]}, "p0008": {"zh": "为便于本引言的叙述，我们称一个用于电路可满足性（circuit satisfiability）的 zk-SNARK 是完全简洁的，如果：", "terms": [{"en": "circuit satisfiability", "zh": "电路可满足性"}]}, "p0009": {"zh": "$^{*}$ 本工作的大部分内容是在第一作者任职于 Protocol Labs 期间完成的。", "terms": [], "en": "$^{*}$ Most of this work was done while the first author was working at Protocol Labs."}, "p0010": {"zh": "1. 预处理$^{1}$阶段／SRS 生成的运行时间在电路规模上是准线性的。", "terms": [{"en": "quasilinear", "zh": "准线性的"}], "en": "1. The preprocessing$^{1}$ phase / SRS generation run time is quasilinear in circuit size."}, "p0011": {"zh": "2. 证明者（prover）的运行时间在电路规模上是准线性的。", "terms": [{"en": "prover", "zh": "证明者"}]}, "p0012": {"zh": "3. 证明长度在电路规模上是对数级的。$^{2}$", "terms": [], "en": "3. The proof length$^{2}$ is logarithmic in circuit size."}, "p0013": {"zh": "4. 验证者$^{3}$的运行时间在电路规模上是多对数级的。", "terms": [{"en": "verifier", "zh": "验证者"}], "en": "4. The verifier$^{3}$ run time is polylogarithmic in circuit size."}, "p0014": {"zh": "Maller 等人 [MBKM] 首次构造出用于电路可满足性的通用完全简洁 zk-SNARK，称为 Sonic。", "terms": [], "en": "Maller et al. [MBKM] constructed for the first time a universal fully succinct zk-SNARK for circuit satisfiability, called Sonic."}, "p0015": {"zh": "[MBKM] 还给出了 Sonic 的一个版本，其证明者运行时间得到极大改善，代价是只能在某种摊还（amortized）意义下实现高效验证。", "terms": [{"en": "amortized", "zh": "摊还的"}]}, "p0016": {"zh": "1.1　我们的结果", "terms": []}, "p0017": {"zh": "本文给出一个通用完全简洁的 zk-SNARK，与完全简洁的 Sonic 相比，其证明者运行时间显著改善。", "terms": []}, "p0018": {"zh": "从宏观上看，我们的改进源自对电路更为直接的算术化，而不是 [MBKM] 那种受 [BCC$^{+}$16] 启发的算术化。与之相结合的是：置换论证建立在乘法子群上的一元求值之上，而不是像 [MBKM] 那样建立在二元多项式的系数之上。", "terms": [{"en": "multiplicative subgroup", "zh": "乘法子群"}], "en": "At a high level our improvements stem from a more direct arithmetization of a circuit as compared to the [BCC$^{+}$16]-inspired arithmetization of [MBKM]. This is combined with a permutation argument over univariate evaluations on a multiplicative subgroup rather than over coefficients of a bivariate polynomial as in [MBKM]."}, "p0019": {"zh": "简而言之，乘法子群之所以有用，原因之一是包括 Sonic 在内的若干协议都使用了基于 Bayer 和 Groth [BG12] 的置换论证。归根结底，在「大乘积论证」中，这被归约为检查「相邻单项式」处各多项式系数之间的关系。", "terms": [{"en": "grand product argument", "zh": "大乘积论证"}, {"en": "monomial", "zh": "单项式"}], "en": "In a nutshell, one reason multiplicative subgroups are useful is that several protocols, including Sonic, use a permutation argument based on Bayer and Groth [BG12]. Ultimately, in the “grand product argument”, this reduces to checking relations between coefficients of polynomials at “neighbouring monomials”."}, "p0020": {"zh": "我们注意到，如果把点 $x$ 与 $g \\cdot x$ 视为相邻的点对（其中 $g$ 是域 $F$ 的某个乘法子群的生成元），那么在这样的点对上检查不同多项式之间的关系将非常方便。", "terms": [{"en": "generator", "zh": "生成元"}], "en": "We observe that if we think of the points $x$, $g \\cdot x$ as neighbours, where $g$ is a generator of a multiplicative subgroup of a field $F$, it is very convenient to check relations between different polynomials at such pairs of points."}, "p0021": {"zh": "另一个相关的便利之处是，乘法子群与拉格朗日基（Lagrange basis）配合得很好。例如，设 $H \\subset F$ 是阶为 $n$ 的乘法子群，且 $x \\in H$。那么满足「在 $H \\backslash \\{x\\}$ 上取值为零」且 $L_x(x) = 1$ 的 $n-1$ 次多项式 $L_x$，具有形式非常稀疏的表示：\n\n$$L_x(X) = c_x \\cdot \\frac{X^{n} - 1}{X - x}$$\n\n其中 $c_x$ 为常数。在依据多项式恒等式构造可高效验证的 [BG12] 型置换论证时，这一点非常有利。", "terms": [{"en": "Lagrange basis", "zh": "拉格朗日基"}, {"en": "polynomial identity", "zh": "多项式恒等式"}], "en": "A related convenience is that multiplicative subgroups interact well with Lagrange bases. For example, suppose $H \\subset F$ is a multiplicative subgroup of order $n$, and $x \\in H$. The polynomial $L_x$ of degree $n-1$ that vanishes on $H \\backslash \\{x\\}$ and has $L_x(x) = 1$ has a very sparse representation of the form\n\n$$L_x(X) = c_x \\cdot \\frac{X^{n} - 1}{X - x}$$\n\nfor a constant $c_x$. This is beneficial when constructing an efficiently verifiable [BG12]-style permutation argument in terms of polynomial identities."}, "p0022": {"zh": "1　本文使用「SNARK」一词指代有时被称为「带预处理的 SNARK」的对象（参见 [GGPR13] 等），其中允许一次性验证者计算，其复杂度在电路规模上是多项式级而非多对数级。作为交换，该 SNARK 被期望适用于所有非一致（non-uniform）电路，而不仅仅是关于一致计算的陈述。", "terms": [{"en": "non-uniform circuit", "zh": "非一致电路"}], "en": "1 We use the term SNARK in this paper for what is sometimes called a “SNARK with preprocessing” (see e.g. [GGPR13]) where one allows a one-time verifier computation that is polynomial rather than polylogarithmic in the circuit size. In return, the SNARK is expected to work for all non-uniform circuits, rather than only statements about uniform computation."}, "p0023": {"zh": "2　从理论角度看，多对数的证明长度更为自然；但对数长度很好地刻画了近期那些使用常数个群元素的构造，有时也是「实用性壁垒」的良好指标。", "terms": []}, "p0024": {"zh": "3　在许多定义中，只要求证明长度是多对数的。例如在 [GGPR13] 的术语体系下，若额外要求验证者运行时间为多对数，则该 SNARK 被称为 unsubtle（非精妙的）。", "terms": []}}, "meta": {"source_name": "plonk.pdf", "page_count": 34, "model": "（样例：人工翻译 · 未调用 API）", "created_at": "2026-09-15 18:05:22", "stats": {"paragraphs": 24, "translated": 24}}}</script>
+<script id="ee-doc-data" type="application/json">{"id": "", "title": "PlonK : Permutations over Lagrange-bases for Oecumenical Noninteractive arguments of Knowledge", "paragraphs": [{"id": "p0001", "page": 1, "page_end": 1, "kind": "text", "level": 0, "text": "PlonK : Permutations over Lagrange-bases for Oecumenical Noninteractive arguments of Knowledge", "math_ratio": 0.0, "bbox": [106.0, 142.0, 489.4, 203.3]}, {"id": "p0002", "page": 1, "page_end": 1, "kind": "text", "level": 0, "text": "Ariel Gabizon$^{*}$ Zachary J. Williamson Oana Ciobotaru Aztec Aztec Pi Squared", "math_ratio": 0.087, "bbox": [132.7, 237.4, 462.6, 267.4]}, {"id": "p0003", "page": 1, "page_end": 1, "kind": "text", "level": 0, "text": "July 17, 2025", "math_ratio": 0.0, "bbox": [263.6, 279.3, 331.7, 291.2]}, {"id": "p0004", "page": 1, "page_end": 1, "kind": "abstract", "level": 0, "text": "Abstract zk-SNARK constructions that utilize an updatable universal structured reference string remove one of the main obstacles in deploying zk-SNARKs[GKM$^{+}$]. The important work of Maller et al. [MBKM] presented Sonic - the first potentially practical zk-SNARK with fully succinct verification for general arithmetic circuits with such an SRS. However, the version of Sonic enabling fully succinct verification still requires relatively high proof construction overheads. We present a universal SNARK construction with fully succinct verification, and significantly lower prover running time (roughly 7.5-20 times fewer group exponentiations than [MBKM] in the fully succinct verifier mode depending on circuit structure).", "math_ratio": 0.01, "bbox": [275.7, 333.1, 478.8, 456.8]}, {"id": "p0005", "page": 1, "page_end": 1, "kind": "text", "level": 0, "text": "Similarly to [MBKM] we rely on a permutation argument based on Bayer and Groth [BG12]. However, we focus on “Evaluations on a subgroup rather than coefficients of monomials”; which enables simplifying both the permutation argument and the arithmetization step.", "math_ratio": 0.0, "bbox": [116.6, 458.8, 478.8, 504.7]}, {"id": "p0006", "page": 1, "page_end": 1, "kind": "heading", "level": 1, "text": "1 Introduction", "math_ratio": 0.0, "bbox": [89.3, 525.7, 181.9, 540.0]}, {"id": "p0007", "page": 1, "page_end": 1, "kind": "text", "level": 0, "text": "Due to real-world deployments of zk-SNARKs, it has become of significant interest to have the structured reference string (SRS) be constructible in a “universal and updatable” fashion. Meaning that the same SRS can be used for statements about all circuits of a certain bounded size; and that at any point in time the SRS can be updated by a new party, such that the honesty of only one party from all updaters up to that point is required for soundness. For brevity, let us call a zk-SNARK with such a setup process universal.", "math_ratio": 0.0, "bbox": [89.3, 552.7, 506.1, 644.9]}, {"id": "p0008", "page": 1, "page_end": 1, "kind": "text", "level": 0, "text": "For the purpose of this introduction, let us say a zk-SNARK for circuit satisfiability is fully succinct if", "math_ratio": 0.0, "bbox": [89.3, 647.5, 506.0, 672.0]}, {"id": "p0009", "page": 1, "page_end": 1, "kind": "text", "level": 0, "text": "\\* Most of this work was done while the first author was working at Protocol Labs.", "math_ratio": 0.0, "bbox": [101.7, 679.0, 431.4, 691.3]}, {"id": "p0010", "page": 2, "page_end": 2, "kind": "text", "level": 0, "text": "1. The preprocessing$^{1}$ phase/SRS generation run time is quasilinear in circuit size.", "math_ratio": 0.0, "bbox": [102.6, 99.5, 498.4, 114.4]}, {"id": "p0011", "page": 2, "page_end": 2, "kind": "text", "level": 0, "text": "2. The prover run time is quasilinear in circuit size.", "math_ratio": 0.0, "bbox": [102.6, 125.8, 350.3, 136.7]}, {"id": "p0012", "page": 2, "page_end": 2, "kind": "text", "level": 0, "text": "3. The proof length is logarithmic$^{2}$ in circuit size.", "math_ratio": 0.0, "bbox": [102.6, 144.1, 340.9, 159.0]}, {"id": "p0013", "page": 2, "page_end": 2, "kind": "text", "level": 0, "text": "4. The verifier run time is polylogarithmic in circuit size.$^{3}$", "math_ratio": 0.0, "bbox": [102.6, 168.7, 380.5, 181.3]}, {"id": "p0014", "page": 2, "page_end": 2, "kind": "text", "level": 0, "text": "Maller et al. [MBKM] constructed for the first time a universal fully succinct zk- SNARK for circuit satisfiability, called Sonic.", "math_ratio": 0.0, "bbox": [89.3, 195.2, 506.0, 219.7]}, {"id": "p0015", "page": 2, "page_end": 2, "kind": "text", "level": 0, "text": "[MBKM] also give a version of Sonic with dramatically improved prover run time, at the expense of efficient verification only in a certain amortized sense.", "math_ratio": 0.0, "bbox": [89.3, 222.3, 506.0, 246.8]}, {"id": "p0016", "page": 2, "page_end": 2, "kind": "heading", "level": 2, "text": "1.1 Our results", "math_ratio": 0.0, "bbox": [89.3, 264.2, 169.6, 276.1]}, {"id": "p0017", "page": 2, "page_end": 2, "kind": "text", "level": 0, "text": "In this work we give a universal fully-succinct zk-SNARK with significantly improved prover run time compared to fully-succinct Sonic.", "math_ratio": 0.0, "bbox": [89.3, 285.6, 506.0, 310.0]}, {"id": "p0018", "page": 2, "page_end": 2, "kind": "text", "level": 0, "text": "At a high level our improvements stem from a more direct arithmetization of a circuit as compared to the [BCC$^{+}$ 16]-inspired arithmetization of [MBKM]. This is combined with a permutation argument over univariate evaluations on a multiplicative subgroup rather than over coefficients of a bivariate polynomial as in [MBKM].", "math_ratio": 0.004, "bbox": [89.3, 312.7, 506.1, 364.2]}, {"id": "p0019", "page": 2, "page_end": 2, "kind": "text", "level": 0, "text": "In a nutshell, one reason multiplicative subgroups are useful is that several protocols, including Sonic , use a permutation argument based on Bayer and Groth [BG12]. Ultimately, in the “grand product argument”, this reduces to checking relations between coefficients of polynomials at “neighbouring monomials”.", "math_ratio": 0.0, "bbox": [89.3, 366.9, 506.0, 418.4]}, {"id": "p0020", "page": 2, "page_end": 2, "kind": "text", "level": 0, "text": "We observe that if we think of the points$x,$ g$\\cdot x$ as neighbours, where g is a generator of a multiplicative subgroup of a field F , it is very convenient to check relations between different polynomials at such pairs of points.", "math_ratio": 0.0, "bbox": [89.3, 420.9, 506.0, 459.1]}, {"id": "p0021", "page": 2, "page_end": 2, "kind": "text", "level": 0, "text": "A related convenience is that multiplicative subgroups interact well with Lagrange bases. For example, suppose$H \\subset F$ is a multiplicative subgroup of order$n$ , and$x\\in H$. The polynomial$L _{x}$ of degree$n-$ 1 that vanishes on$H \\backslash \\{x \\}$ and has$L_{x}$($x$ )$=$ 1, has a very sparse representation of the form $L_{x}$($X ) = c^{x}$($X^{n}-$ 1) ($X - x$ )$,$ for a constant c$_{x}$ . This is beneficial when constructing an efficiently verifiable [BG12]- style permutation argument in terms of polynomial identities.", "math_ratio": 0.225, "bbox": [89.3, 461.7, 506.0, 585.5]}, {"id": "p0022", "page": 2, "page_end": 2, "kind": "text", "level": 0, "text": "1 We use the term SNARK in this paper for what is sometimes called a “SNARK with preprocessing”(see e.g. [GGPR13]) where one allows a one-time verifier computation that is polynomial rather than polylogarithmic in the circuit size. In return, the SNARK is expected to work for all non-uniform circuits , rather than only statements about uniform computation.", "math_ratio": 0.0, "bbox": [89.3, 594.2, 506.1, 637.5]}, {"id": "p0023", "page": 2, "page_end": 2, "kind": "text", "level": 0, "text": "2 From a theoretical point of view, polylogarithmic proof length is more natural; but logarithmic nicely captures recent constructions with a constant number of group elements, and sometimes is a good indication of the “practicality barrier”.", "math_ratio": 0.0, "bbox": [89.3, 638.0, 506.1, 670.4]}, {"id": "p0024", "page": 2, "page_end": 2, "kind": "text", "level": 0, "text": "3 In many definitions, only proof size is required to be polylogarithmic. For example, in the terminology of [GGPR13], additionally requiring polylogarithmic verifier run time means the SNARK is unsubtle.", "math_ratio": 0.0, "bbox": [89.3, 670.9, 506.1, 692.3]}], "translations": {"p0001": {"zh": "PlonK：基于拉格朗日基置换的通用非交互知识论证", "terms": []}, "p0002": {"zh": "Ariel Gabizon$^{*}$　Zachary J. Williamson　Oana Ciobotaru　（所属机构：Aztec、Aztec、Pi Squared）", "terms": [], "en": "Ariel Gabizon$^{*}$　Zachary J. Williamson　Oana Ciobotaru　—　Aztec · Aztec · Pi Squared"}, "p0003": {"zh": "2025 年 7 月 17 日", "terms": []}, "p0004": {"zh": "利用可更新通用结构化参考串（structured reference string, SRS）的 zk-SNARK 方案，消除了部署 zk-SNARK 的主要障碍之一 [GKM$^{+}$]。Maller 等人的重要工作 [MBKM] 给出了 Sonic —— 首个在具有此类 SRS 的通用算术电路上、具备完全简洁（fully succinct）验证且具备实用潜力的 zk-SNARK。然而，那个能够实现完全简洁验证的 Sonic 版本，其证明构造开销仍然相对偏高。本文给出一种通用 SNARK 构造，具备完全简洁验证，且证明者运行时间显著降低（在完全简洁验证模式下，依据电路结构不同，群指数运算次数约为 [MBKM] 的 1/7.5 至 1/20）。", "terms": [{"en": "structured reference string, SRS", "zh": "结构化参考串"}, {"en": "zk-SNARK", "zh": "零知识简洁非交互式知识论证"}, {"en": "fully succinct", "zh": "完全简洁"}], "en": "Abstract. zk-SNARK constructions that utilize an updatable universal structured reference string remove one of the main obstacles in deploying zk-SNARKs [GKM$^{+}$]. The important work of Maller et al. [MBKM] presented Sonic — the first potentially practical zk-SNARK with fully succinct verification for general arithmetic circuits with such an SRS. However, the version of Sonic enabling fully succinct verification still requires relatively high proof construction overheads. We present a universal SNARK construction with fully succinct verification, and significantly lower prover running time (roughly $7.5$–$20$ times fewer group exponentiations than [MBKM] in the fully succinct verifier mode, depending on circuit structure)."}, "p0005": {"zh": "与 [MBKM] 类似，我们依赖基于 Bayer 和 Groth [BG12] 的置换论证（permutation argument）。不同之处在于，我们关注的是「在子群上取值的求值形式，而非单项式系数」；这使得置换论证与算术化（arithmetization）步骤都能得到简化。", "terms": [{"en": "permutation argument", "zh": "置换论证"}, {"en": "arithmetization", "zh": "算术化"}]}, "p0006": {"zh": "1　引言", "terms": []}, "p0007": {"zh": "由于 zk-SNARK 已在真实场景中部署，如何让结构化参考串（SRS）以「通用且可更新」的方式构造出来，已成为一个备受关注的问题。其含义是：同一个 SRS 可用于关于某个有界规模内所有电路的陈述；并且在任意时刻，SRS 都可以被新的参与方更新，只要截至该时刻的全部更新者中有一个是诚实的，可靠性（soundness）即可成立。为简洁起见，我们把具有这种设置过程的 zk-SNARK 称为通用的。", "terms": [{"en": "soundness", "zh": "可靠性"}, {"en": "universal", "zh": "通用的"}]}, "p0008": {"zh": "为便于本引言的叙述，我们称一个用于电路可满足性（circuit satisfiability）的 zk-SNARK 是完全简洁的，如果：", "terms": [{"en": "circuit satisfiability", "zh": "电路可满足性"}]}, "p0009": {"zh": "$^{*}$ 本工作的大部分内容是在第一作者任职于 Protocol Labs 期间完成的。", "terms": [], "en": "$^{*}$ Most of this work was done while the first author was working at Protocol Labs."}, "p0010": {"zh": "1. 预处理$^{1}$阶段／SRS 生成的运行时间在电路规模上是准线性的。", "terms": [{"en": "quasilinear", "zh": "准线性的"}], "en": "1. The preprocessing$^{1}$ phase / SRS generation run time is quasilinear in circuit size."}, "p0011": {"zh": "2. 证明者（prover）的运行时间在电路规模上是准线性的。", "terms": [{"en": "prover", "zh": "证明者"}]}, "p0012": {"zh": "3. 证明长度在电路规模上是对数级的。$^{2}$", "terms": [], "en": "3. The proof length$^{2}$ is logarithmic in circuit size."}, "p0013": {"zh": "4. 验证者$^{3}$的运行时间在电路规模上是多对数级的。", "terms": [{"en": "verifier", "zh": "验证者"}], "en": "4. The verifier$^{3}$ run time is polylogarithmic in circuit size."}, "p0014": {"zh": "Maller 等人 [MBKM] 首次构造出用于电路可满足性的通用完全简洁 zk-SNARK，称为 Sonic。", "terms": [], "en": "Maller et al. [MBKM] constructed for the first time a universal fully succinct zk-SNARK for circuit satisfiability, called Sonic."}, "p0015": {"zh": "[MBKM] 还给出了 Sonic 的一个版本，其证明者运行时间得到极大改善，代价是只能在某种摊还（amortized）意义下实现高效验证。", "terms": [{"en": "amortized", "zh": "摊还的"}]}, "p0016": {"zh": "1.1　我们的结果", "terms": []}, "p0017": {"zh": "本文给出一个通用完全简洁的 zk-SNARK，与完全简洁的 Sonic 相比，其证明者运行时间显著改善。", "terms": []}, "p0018": {"zh": "从宏观上看，我们的改进源自对电路更为直接的算术化，而不是 [MBKM] 那种受 [BCC$^{+}$16] 启发的算术化。与之相结合的是：置换论证建立在乘法子群上的一元求值之上，而不是像 [MBKM] 那样建立在二元多项式的系数之上。", "terms": [{"en": "multiplicative subgroup", "zh": "乘法子群"}], "en": "At a high level our improvements stem from a more direct arithmetization of a circuit as compared to the [BCC$^{+}$16]-inspired arithmetization of [MBKM]. This is combined with a permutation argument over univariate evaluations on a multiplicative subgroup rather than over coefficients of a bivariate polynomial as in [MBKM]."}, "p0019": {"zh": "简而言之，乘法子群之所以有用，原因之一是包括 Sonic 在内的若干协议都使用了基于 Bayer 和 Groth [BG12] 的置换论证。归根结底，在「大乘积论证」中，这被归约为检查「相邻单项式」处各多项式系数之间的关系。", "terms": [{"en": "grand product argument", "zh": "大乘积论证"}, {"en": "monomial", "zh": "单项式"}], "en": "In a nutshell, one reason multiplicative subgroups are useful is that several protocols, including Sonic, use a permutation argument based on Bayer and Groth [BG12]. Ultimately, in the “grand product argument”, this reduces to checking relations between coefficients of polynomials at “neighbouring monomials”."}, "p0020": {"zh": "我们注意到，如果把点 $x$ 与 $g \\cdot x$ 视为相邻的点对（其中 $g$ 是域 $F$ 的某个乘法子群的生成元），那么在这样的点对上检查不同多项式之间的关系将非常方便。", "terms": [{"en": "generator", "zh": "生成元"}], "en": "We observe that if we think of the points $x$, $g \\cdot x$ as neighbours, where $g$ is a generator of a multiplicative subgroup of a field $F$, it is very convenient to check relations between different polynomials at such pairs of points."}, "p0021": {"zh": "另一个相关的便利之处是，乘法子群与拉格朗日基（Lagrange basis）配合得很好。例如，设 $H \\subset F$ 是阶为 $n$ 的乘法子群，且 $x \\in H$。那么满足「在 $H \\backslash \\{x\\}$ 上取值为零」且 $L_x(x) = 1$ 的 $n-1$ 次多项式 $L_x$，具有形式非常稀疏的表示：\n\n$$L_x(X) = c_x \\cdot \\frac{X^{n} - 1}{X - x}$$\n\n其中 $c_x$ 为常数。在依据多项式恒等式构造可高效验证的 [BG12] 型置换论证时，这一点非常有利。", "terms": [{"en": "Lagrange basis", "zh": "拉格朗日基"}, {"en": "polynomial identity", "zh": "多项式恒等式"}], "en": "A related convenience is that multiplicative subgroups interact well with Lagrange bases. For example, suppose $H \\subset F$ is a multiplicative subgroup of order $n$, and $x \\in H$. The polynomial $L_x$ of degree $n-1$ that vanishes on $H \\backslash \\{x\\}$ and has $L_x(x) = 1$ has a very sparse representation of the form\n\n$$L_x(X) = c_x \\cdot \\frac{X^{n} - 1}{X - x}$$\n\nfor a constant $c_x$. This is beneficial when constructing an efficiently verifiable [BG12]-style permutation argument in terms of polynomial identities."}, "p0022": {"zh": "1　本文使用「SNARK」一词指代有时被称为「带预处理的 SNARK」的对象（参见 [GGPR13] 等），其中允许一次性验证者计算，其复杂度在电路规模上是多项式级而非多对数级。作为交换，该 SNARK 被期望适用于所有非一致（non-uniform）电路，而不仅仅是关于一致计算的陈述。", "terms": [{"en": "non-uniform circuit", "zh": "非一致电路"}], "en": "1 We use the term SNARK in this paper for what is sometimes called a “SNARK with preprocessing” (see e.g. [GGPR13]) where one allows a one-time verifier computation that is polynomial rather than polylogarithmic in the circuit size. In return, the SNARK is expected to work for all non-uniform circuits, rather than only statements about uniform computation."}, "p0023": {"zh": "2　从理论角度看，多对数的证明长度更为自然；但对数长度很好地刻画了近期那些使用常数个群元素的构造，有时也是「实用性壁垒」的良好指标。", "terms": []}, "p0024": {"zh": "3　在许多定义中，只要求证明长度是多对数的。例如在 [GGPR13] 的术语体系下，若额外要求验证者运行时间为多对数，则该 SNARK 被称为 unsubtle（非精妙的）。", "terms": []}}, "meta": {"source_name": "plonk.pdf", "page_count": 34, "model": "（样例：人工翻译 · 未调用 API）", "created_at": "", "stats": {"paragraphs": 24, "translated": 24}}}</script>
 <script>
 (function () {
   var doc = JSON.parse(document.getElementById('ee-doc-data').textContent);
   var reader = document.getElementById('ee-reader');
-  EasyEssay.askPanel.mount(document.getElementById('ee-ask'), {
-    docId: doc.id,
-    apiBase: window.EASYESSay_API
-  });
+  var ENABLE_ASK = true;
+  if (ENABLE_ASK) {
+    EasyEssay.askPanel.mount(document.getElementById('ee-ask'), {
+      docId: doc.id,
+      apiBase: window.EASYESSay_API
+    });
+  }
   EasyEssay.renderBilingual(reader, doc, {
     viewMode: 'all',
-    onAsk: function (payload) { EasyEssay.askPanel.open(payload); }
+    onAsk: ENABLE_ASK ? function (payload) { EasyEssay.askPanel.open(payload); } : null
   });
   EasyEssay.bindToolbar(document.querySelector('.ee-topbar'), reader);
 })();
