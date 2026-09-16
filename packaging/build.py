@@ -125,6 +125,9 @@ def main() -> int:
                     help="打包成目录而不是单文件（启动更快，但文件多）")
     ap.add_argument("--console", action="store_true",
                     help="保留控制台窗口（排错用；默认 Windows 下隐藏控制台）")
+    ap.add_argument("--with-ocr", action="store_true",
+                    help="把 OCR（rapidocr-onnxruntime）打进去，支持扫描版 PDF；"
+                         "体积会从 ~62 MB 涨到 ~130 MB")
     args = ap.parse_args()
 
     try:
@@ -160,9 +163,26 @@ def main() -> int:
         cmd.append("--noconsole")
     for mod in HIDDEN_IMPORTS:
         cmd += ["--hidden-import", mod]
-    # 这些是重量级可选依赖，装了就带上，没装也不影响主流程
-    for mod in ("pymupdf", "pdfplumber", "pylatexenc", "dotenv", "PIL", "rapidocr_onnxruntime"):
+    # 这些是核心依赖，装了就带上
+    for mod in ("pymupdf", "pdfplumber", "pylatexenc", "dotenv", "PIL"):
         cmd += ["--hidden-import", mod]
+    # ⚠️ OCR **不能**"装了就带"：本机装过 rapidocr-onnxruntime 之后，
+    #    它会把 onnxruntime + opencv + numpy 一起拖进来，exe 从 62 MB 直接涨到 130 MB
+    #    （踩过：我只是为了读一张截图临时装了个 OCR，结果打包体积翻倍）。
+    #    所以做成显式开关，需要给扫描件做 OCR 的人才加 --with-ocr。
+    # 光是"不加 hidden-import"不够：PyInstaller 是**按代码里的 import 语句**静态收集的，
+    # app/ocr.py 里那句懒加载 `from rapidocr_onnxruntime import RapidOCR` 照样会被它揪出来，
+    # 于是 onnxruntime/opencv/numpy 全被拖进来（实测 62 MB → 124 MB）。
+    # 必须显式 --exclude-module 才真的不打包。
+    _OCR_MODULES = ("rapidocr_onnxruntime", "onnxruntime", "cv2", "numpy",
+                    "pyclipper", "shapely", "flatbuffers")
+    ocr_ok = bool(args.with_ocr)
+    if ocr_ok:
+        for mod in ("rapidocr_onnxruntime", "cv2", "onnxruntime", "numpy"):
+            cmd += ["--hidden-import", mod]
+    else:
+        for mod in _OCR_MODULES:
+            cmd += ["--exclude-module", mod]
     # pywebview 自带 js/css 资源（webview/js、webview/lib），必须一并收集，
     # 否则窗口里的 JS 桥接会缺文件
     try:
@@ -182,7 +202,11 @@ def main() -> int:
     (dist / "README-使用说明.txt").write_text(README_TXT, encoding="utf-8")
 
     binary = dist / (NAME + (".exe" if platform.system() == "Windows" else ""))
-    print(f"\n✅ 打包完成：{binary}")
+    size_mb = binary.stat().st_size / 1048576 if binary.exists() else 0
+    print(f"\n✅ 打包完成：{binary}（{size_mb:.1f} MB）")
+    print("   OCR：" + ("已包含（扫描版 PDF 可用）" if ocr_ok else
+                      "未包含（扫描件请装 requirements-ocr.txt 后用源码运行，"
+                      "或加 --with-ocr 重新打包）"))
 
     if args.zip:
         tag = f"{platform.system().lower()}-{platform.machine().lower()}"
