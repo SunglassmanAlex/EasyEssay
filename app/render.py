@@ -108,9 +108,8 @@ def build_standalone_html(doc: dict, api_base: str = "http://127.0.0.1:8765",
 </style>
 </head>
 <body class="ee-standalone" data-api-base="{api_base}">
-<!-- 导出物是**一份文档**，不是应用界面：头部只留标题与说明，
-     控制按钮挪到右下角悬浮（参照稿也就是一个右下角的切换钮）。
-     原来的应用顶栏（logo + 进度条）会让读者一眼觉得"这是个网页应用"。 -->
+<!-- 导出物是一份**文档**（不是应用界面）：头部只留标题与说明，
+     控制按钮在右下角悬浮。 -->
 <header class="ee-doc-head">
   <h1 class="ee-doc-h1">{_html_escape(title)}</h1>
   <div class="ee-doc-meta">{_html_escape(note)}</div>

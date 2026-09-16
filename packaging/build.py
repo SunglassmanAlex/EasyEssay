@@ -125,6 +125,9 @@ def main() -> int:
                     help="打包成目录而不是单文件（启动更快，但文件多）")
     ap.add_argument("--console", action="store_true",
                     help="保留控制台窗口（排错用；默认 Windows 下隐藏控制台）")
+    ap.add_argument("--out", default="",
+                    help="输出目录（默认 dist/）。用途：程序正开着时 dist/EasyEssay.exe "
+                         "被占用无法覆盖，可以先打到别处，关掉程序再替换。")
     ap.add_argument("--with-ocr", action="store_true",
                     help="把 OCR（rapidocr-onnxruntime）打进去，支持扫描版 PDF；"
                          "体积会从 ~62 MB 涨到 ~130 MB")
@@ -136,7 +139,7 @@ def main() -> int:
         print("缺少 PyInstaller，请先执行： pip install -r requirements-build.txt")
         return 2
 
-    dist = DIST
+    dist = Path(args.out).resolve() if args.out else DIST
     # ⚠️ **绝不能整个删掉 dist/**：打包产物（exe/zip）放在 dist/，但 exe 运行时的
     #    数据目录也是它自己旁边的 data/（见 config._writable_root），
     #    也就是 **dist/data 里存着用户的文档**。整目录 rmtree 会把用户的论文删掉 ——
@@ -167,6 +170,11 @@ def main() -> int:
         sys.executable, "-m", "PyInstaller",
         "--noconfirm", "--clean",
         "--name", NAME,
+        # ⚠️ 必须显式给 distpath：不给的话 PyInstaller 往默认的 `<cwd>/dist/` 写 ——
+        # 程序正开着时那个 exe 被占用，`--out` 就形同虚设（踩过）。
+        "--distpath", str(dist),
+        "--workpath", str(dist / ".build"),
+        "--specpath", str(dist / ".build"),
         "--paths", str(ROOT),
         "--add-data", f"{ROOT / 'web'}{sep}web",
     ]
