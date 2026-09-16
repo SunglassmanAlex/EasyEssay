@@ -170,6 +170,17 @@ def load_extracted(doc_id: str) -> dict:
     return _read_json(doc_dir(doc_id) / "extracted.json", {"paragraphs": []})
 
 
+def save_glossary(doc_id: str, glossary: list[list[str]]) -> None:
+    """把术语表落盘（文档级）。用途：① 重译/重抽时沿用既有译法，减少不一致；
+    ② 术语统一（第三轮）的输入。"""
+    _write_json(doc_dir(doc_id) / "glossary.json", glossary)
+
+
+def load_glossary(doc_id: str) -> list[list[str]]:
+    data = _read_json(doc_dir(doc_id) / "glossary.json", [])
+    return [list(x) for x in data if isinstance(x, (list, tuple)) and len(x) >= 2]
+
+
 def load_translations(doc_id: str) -> dict:
     return _read_json(doc_dir(doc_id) / "translated.json", {})
 

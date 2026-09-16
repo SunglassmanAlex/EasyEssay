@@ -512,9 +512,21 @@ def translate_document(
         # 注意：记录存在但 zh 为空（例如重抽后合并段落丢失了半段译文）也要重译
         todo = [p for p in paras if p["id"] not in done or not _has_zh(p["id"])]
     if not todo:
-        store.update_meta(doc_id, {"status": "ready", "progress": 1.0,
-                                   "message": "无需翻译的段落"})
-        return {"newly": 0, "translated": len(done), "total": len(paras), "skipped": True}
+        # ⚠️ 已经全译的文档也要跑第三轮（术语统一）——
+        # 现有文库绝大多数就是"早就翻完了"的状态，如果这里直接 return，
+        # 术语统一永远轮不到它们执行（踩过）。
+        term_stat: dict = {}
+        if st.get("unify_terms", True):
+            try:
+                term_stat = unify_terms(doc_id)
+            except Exception:  # noqa: BLE001
+                term_stat = {}
+        msg = "无需翻译的段落"
+        if term_stat.get("replaced"):
+            msg += f"；术语统一 {term_stat['replaced']} 处"
+        store.update_meta(doc_id, {"status": "ready", "progress": 1.0, "message": msg})
+        return {"newly": 0, "translated": len(done), "total": len(paras),
+                "skipped": True, "terms": term_stat}
 
     batches = _chunk(todo, int(st.get("translate_batch_size", 8) or 8),
                      int(st.get("max_chars_per_batch", 3500) or 3500))
@@ -586,10 +598,253 @@ def translate_document(
         except Exception:  # noqa: BLE001
             pass
 
+    # —— 第三轮：术语统一（确定性替换，不再花 AI 请求）——
+    # 分批翻译必然产生"同一术语两种译法"，这里统一成多数派；
+    # 同时把术语表落盘，供重译/重抽时沿用。
+    term_stat: dict = {}
+    if st.get("unify_terms", True):
+        try:
+            term_stat = unify_terms(doc_id)
+        except Exception:  # noqa: BLE001
+            term_stat = {}
+    if term_stat.get("replaced"):
+        store.update_meta(doc_id, {
+            "message": f"完成：{total_translated}/{len(paras)} 段"
+                       + f"，术语统一 {term_stat['replaced']} 处"})
+
+    # —— 第三轮：术语统一（确定性替换，不再花 AI 请求）——
+    # 分批翻译必然产生"同一术语两种译法"，这里统一成多数派；
+    # 同时把术语表落盘，供重译/重抽时沿用。
+    term_stat: dict = {}
+    if st.get("unify_terms", True):
+        try:
+            term_stat = unify_terms(doc_id)
+        except Exception:  # noqa: BLE001
+            term_stat = {}
+    if term_stat.get("replaced"):
+        store.update_meta(doc_id, {
+            "message": f"完成：{total_translated}/{len(paras)} 段"
+                       + f"，术语统一 {term_stat['replaced']} 处"})
+
     # newly：本次真正新翻译的段数；translated：翻译后累计已译段数；total：文档总段数
     return {"newly": completed, "translated": total_translated, "total": len(paras),
             "failed": sorted(set(failed)), "batches": len(batches),
+            "terms": term_stat,
             "previous_status": final_meta.get("status")}
+
+
+# ---------------------------------------------------------------- 术语统一（第三轮）
+
+def collect_term_variants(done: dict) -> dict[str, dict[str, int]]:
+    """汇总全篇术语 → {英文小写: {中文译法: 出现次数}}。"""
+    out: dict[str, dict[str, int]] = {}
+    for rec in done.values():
+        for t in (rec or {}).get("terms") or []:
+            en = str(t.get("en") or "").strip().lower()
+            zh = str(t.get("zh") or "").strip()
+            if not en or not zh:
+                continue
+            out.setdefault(en, {})
+            out[en][zh] = out[en].get(zh, 0) + 1
+    return out
+
+
+def build_term_map(variants: dict[str, dict[str, int]]) -> tuple[dict[str, str], list[str]]:
+    """决定"少数派 → 多数派"的替换表，并挡掉会误伤长词的替换。
+
+    返回 (替换表, 跳过的说明)。多数派按出现次数取最大，平票取更长的那个
+    （更具体通常意味着更准确）。
+    """
+    chosen: list[str] = []
+    plan: dict[str, str] = {}
+    for en, zh_map in variants.items():
+        if len(zh_map) < 2:
+            continue
+        best = sorted(zh_map.items(), key=lambda kv: (kv[1], len(kv[0])), reverse=True)[0][0]
+        chosen.append(best)
+        for zh in zh_map:
+            if zh != best and len(zh) >= 2:
+                plan[zh] = best
+    skipped: list[str] = []
+    fixed_plan: dict[str, str] = {}
+    for src, dst in plan.items():
+        # 若 src 是**其他**术语选定译法的子串，替换会毁掉那个更长的术语
+        if any(src != c and src in c for c in chosen):
+            skipped.append(f"{src}→{dst}（是更长术语的一部分）")
+            continue
+        fixed_plan[src] = dst
+    return fixed_plan, skipped
+
+
+def _replace_in(obj, plan: dict[str, str]) -> int:
+    """递归替换记录里所有字符串字段。返回替换处数。"""
+    n = 0
+    if isinstance(obj, str):
+        return 0
+    if isinstance(obj, list):
+        for i, v in enumerate(obj):
+            if isinstance(v, str):
+                new = v
+                for a, b in plan.items():
+                    if a in new:
+                        n += new.count(a)
+                        new = new.replace(a, b)
+                obj[i] = new
+            else:
+                n += _replace_in(v, plan)
+    elif isinstance(obj, dict):
+        for k, v in obj.items():
+            if isinstance(v, str):
+                new = v
+                for a, b in plan.items():
+                    if a in new:
+                        n += new.count(a)
+                        new = new.replace(a, b)
+                obj[k] = new
+            else:
+                n += _replace_in(v, plan)
+    return n
+
+
+def unify_terms(doc_id: str) -> dict:
+    """第三轮：把同一术语的多种译法统一成多数派。
+
+    只做字符串层替换，**不再请求模型** —— 这一步的正确性完全可验证，
+    交给模型反而有改写风险。改动量会写进 meta，便于核对。
+    """
+    done = store.load_translations(doc_id)
+    variants = collect_term_variants(done)
+    plan, skipped = build_term_map(variants)
+    conflicts = {en: z for en, z in variants.items() if len(z) > 1}
+    stat = {"conflicts": len(conflicts), "replaced": 0, "skipped": skipped,
+            "terms": [[en, sorted(z, key=lambda k: -z[k])[0]] for en, z in conflicts.items()]}
+    if plan:
+        total = 0
+        for pid, rec in done.items():
+            if not isinstance(rec, dict):
+                continue
+            total += _replace_in(rec, plan)
+        if total:
+            store.save_translations(doc_id, done)
+        stat["replaced"] = total
+    # 术语表落盘：重译/重抽时沿用，减少再次出现不一致
+    glossary: list[list[str]] = []
+    for en_map, zh_map in sorted(variants.items()):
+        best = sorted(zh_map.items(), key=lambda kv: (kv[1], len(kv[0])), reverse=True)[0][0]
+        glossary.append([en_map, best])
+    if glossary:
+        try:
+            store.save_glossary(doc_id, glossary[:120])
+        except Exception:  # noqa: BLE001
+            pass
+    return stat
+
+
+# ---------------------------------------------------------------- 术语统一（第三轮）
+
+def collect_term_variants(done: dict) -> dict[str, dict[str, int]]:
+    """汇总全篇术语 → {英文小写: {中文译法: 出现次数}}。"""
+    out: dict[str, dict[str, int]] = {}
+    for rec in done.values():
+        for t in (rec or {}).get("terms") or []:
+            en = str(t.get("en") or "").strip().lower()
+            zh = str(t.get("zh") or "").strip()
+            if not en or not zh:
+                continue
+            out.setdefault(en, {})
+            out[en][zh] = out[en].get(zh, 0) + 1
+    return out
+
+
+def build_term_map(variants: dict[str, dict[str, int]]) -> tuple[dict[str, str], list[str]]:
+    """决定"少数派 → 多数派"的替换表，并挡掉会误伤长词的替换。
+
+    返回 (替换表, 跳过的说明)。多数派按出现次数取最大，平票取更长的那个
+    （更具体通常意味着更准确）。
+    """
+    chosen: list[str] = []
+    plan: dict[str, str] = {}
+    for en, zh_map in variants.items():
+        if len(zh_map) < 2:
+            continue
+        best = sorted(zh_map.items(), key=lambda kv: (kv[1], len(kv[0])), reverse=True)[0][0]
+        chosen.append(best)
+        for zh in zh_map:
+            if zh != best and len(zh) >= 2:
+                plan[zh] = best
+    skipped: list[str] = []
+    fixed_plan: dict[str, str] = {}
+    for src, dst in plan.items():
+        # 若 src 是**其他**术语选定译法的子串，替换会毁掉那个更长的术语
+        if any(src != c and src in c for c in chosen):
+            skipped.append(f"{src}→{dst}（是更长术语的一部分）")
+            continue
+        fixed_plan[src] = dst
+    return fixed_plan, skipped
+
+
+def _replace_in(obj, plan: dict[str, str]) -> int:
+    """递归替换记录里所有字符串字段。返回替换处数。"""
+    n = 0
+    if isinstance(obj, str):
+        return 0
+    if isinstance(obj, list):
+        for i, v in enumerate(obj):
+            if isinstance(v, str):
+                new = v
+                for a, b in plan.items():
+                    if a in new:
+                        n += new.count(a)
+                        new = new.replace(a, b)
+                obj[i] = new
+            else:
+                n += _replace_in(v, plan)
+    elif isinstance(obj, dict):
+        for k, v in obj.items():
+            if isinstance(v, str):
+                new = v
+                for a, b in plan.items():
+                    if a in new:
+                        n += new.count(a)
+                        new = new.replace(a, b)
+                obj[k] = new
+            else:
+                n += _replace_in(v, plan)
+    return n
+
+
+def unify_terms(doc_id: str) -> dict:
+    """第三轮：把同一术语的多种译法统一成多数派。
+
+    只做字符串层替换，**不再请求模型** —— 这一步的正确性完全可验证，
+    交给模型反而有改写风险。改动量会写进 meta，便于核对。
+    """
+    done = store.load_translations(doc_id)
+    variants = collect_term_variants(done)
+    plan, skipped = build_term_map(variants)
+    conflicts = {en: z for en, z in variants.items() if len(z) > 1}
+    stat = {"conflicts": len(conflicts), "replaced": 0, "skipped": skipped,
+            "terms": [[en, sorted(z, key=lambda k: -z[k])[0]] for en, z in conflicts.items()]}
+    if plan:
+        total = 0
+        for pid, rec in done.items():
+            if not isinstance(rec, dict):
+                continue
+            total += _replace_in(rec, plan)
+        if total:
+            store.save_translations(doc_id, done)
+        stat["replaced"] = total
+    # 术语表落盘：重译/重抽时沿用，减少再次出现不一致
+    glossary: list[list[str]] = []
+    for en_map, zh_map in sorted(variants.items()):
+        best = sorted(zh_map.items(), key=lambda kv: (kv[1], len(kv[0])), reverse=True)[0][0]
+        glossary.append([en_map, best])
+    if glossary:
+        try:
+            store.save_glossary(doc_id, glossary[:120])
+        except Exception:  # noqa: BLE001
+            pass
+    return stat
 
 
 # ---------------------------------------------------------------- 协议结构化（第二轮）

@@ -608,6 +608,57 @@ def main() -> None:
               .get("lines") == ["一", "二", "三"])
 
 
+        # ------------------------------------------------------------ 17
+        print("\n== 17. 第三轮：术语一致性统一（确定性，不花 AI）==")
+        # 分批翻译必然出现"同一术语两种译法"（实测用户论文里真有
+        # `non-colluding` → 不合谋 / 非合谋）。统一用**字符串替换**比再叫一次模型可靠：
+        # 可验证、零幻觉、零成本。
+        fake = {
+            "a": {"zh": "这里用了许诺方案", "terms": [{"en": "commitment", "zh": "许诺"}]},
+            "b": {"zh": "承诺更常见", "terms": [{"en": "commitment", "zh": "承诺"}]},
+            "c": {"zh": "还是承诺", "terms": [{"en": "commitment", "zh": "承诺"}]},
+            "d": {"zh": "多项式承诺方案",
+                  "terms": [{"en": "polynomial commitment", "zh": "多项式承诺"}]},
+        }
+        plan, _skipped = T.build_term_map(T.collect_term_variants(fake))
+        check("少数派被替换成多数派", plan.get("许诺") == "承诺", str(plan))
+        n_rep = T._replace_in(fake, plan)
+        check("替换真的落到译文里", fake["a"]["zh"].startswith("这里用了承诺"), fake["a"]["zh"])
+        check("更长的术语不被误伤（承诺 ≠ 多项式承诺）",
+              fake["d"]["zh"] == "多项式承诺方案", fake["d"]["zh"])
+        check("替换处数可统计", n_rep >= 1, f"{n_rep} 处")
+
+        # 端到端：造一个"两种译法"的文档，跑完整流程看是否统一
+        tdoc2 = store.create_doc("术语统一自测", PDF, "t.pdf")
+        tdata2 = extract_pdf(PDF, p_from, min(p_to, p_from))
+        tdata2["paragraphs"] = tdata2["paragraphs"][:6]
+        for i, p_ in enumerate(tdata2["paragraphs"]):
+            p_["id"] = f"q{i:04d}"
+        store.save_extracted(tdoc2, tdata2)
+        # **全部**段落都先塞好译文 —— 这样 translate_document 会走"无需翻译"的
+        # 提前返回分支，专门验证那条分支也会跑第三轮（踩过：它原来直接 return，
+        # 而现有文库绝大多数就是"早就翻完了"的状态，第三轮永远轮不到）
+        store.save_translations(tdoc2, {
+            f"q{i:04d}": {"zh": f"第{i}段非合谋场景" if i % 3 else f"第{i}段不合谋模型",
+                          "terms": [{"en": "non-colluding",
+                                     "zh": "不合谋" if i % 3 == 0 else "非合谋"}]}
+            for i in range(len(tdata2["paragraphs"]))
+        })
+        # 用 force=False：文档"已译"，只补剩下的段落 ——
+        # 这样预置的两种译法会被保留下来，第三轮才有的可统一
+        # （force=True 会全量重译、把预置译文覆盖掉，踩过）
+        res2 = T.translate_document(tdoc2, settings)
+        tr2 = store.load_translations(tdoc2)
+        check("已全译的文档也走第三轮（提前返回分支没跳过它）",
+              (res2.get("terms") or {}).get("conflicts", 0) >= 1, str(res2.get("terms")))
+        check("少数派译法在译文里被统一",
+              "不合谋" not in str(tr2["q0001"].get("zh")), str(tr2["q0001"].get("zh")))
+        check("术语表落盘并可读回",
+              any(g[0] == "non-colluding" for g in store.load_glossary(tdoc2)),
+              f"{len(store.load_glossary(tdoc2))} 条")
+        store.delete_doc(tdoc2)
+
+
     finally:
         # ⚠️ 清理必须放在 finally，但**测试节必须留在 try 里**：第 12/13/15 节依赖
         # T.make_client 被换成计数用 mock，如果把它们写到 finally 之后，
