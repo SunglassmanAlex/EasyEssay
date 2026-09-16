@@ -98,6 +98,18 @@ def _rows_to_markdown(rows: list | None) -> str:
     return "\n".join(lines)
 
 
+def _caption_like(block: dict) -> bool:
+    """块看起来是不是题注（`Table 1:` / `Figure 2:`）。
+
+    ⚠️ 优先读 `text`：段落合并之后块里**已经没有 `lines` 了**，
+    早先只读 `lines` 导致题注永远匹配不上、题注会重复出现一次（踩过）。
+    """
+    text = block.get("text")
+    if not text:
+        text = " ".join(sp["text"] for ln in block.get("lines", []) for sp in ln["spans"]).strip()
+    return tables.looks_caption(text or "")
+
+
 def _page_tables(page, size: float = 10.0, captions: list[dict] | None = None) -> list[dict]:
     """取出本页的**结构化块**：表格（网格）与伪代码（按行）。
 
@@ -114,6 +126,16 @@ def _page_tables(page, size: float = 10.0, captions: list[dict] | None = None) -
         return []
     out: list[dict] = []
     for t in found:
+        if t.get("kind") == "figure":
+            fig = t.get("figure") or {}
+            if not fig.get("caption"):
+                continue
+            out.append({"bbox": tuple(float(v) for v in t["bbox"]), "kind": "figure",
+                        "md": fig.get("caption", ""), "figure": fig,
+                        "caption": fig.get("caption", ""),
+                        "caption_bbox": t.get("caption_bbox"),
+                        "note": t.get("note", "")})
+            continue
         if t.get("kind") == "algorithm":
             lines = (t.get("algorithm") or {}).get("lines") or []
             if len(lines) < 3:
@@ -127,7 +149,10 @@ def _page_tables(page, size: float = 10.0, captions: list[dict] | None = None) -
         if not md:
             continue
         out.append({"bbox": tuple(float(v) for v in t["bbox"]), "kind": "table",
-                    "md": md, "table": grid, "note": t.get("note", "")})
+                    "md": md, "table": grid, "note": t.get("note", ""),
+                    # 表题跟着表走（渲染成 .tcap），题注段落本身会被吸收掉
+                    "caption": t.get("caption", ""),
+                    "caption_bbox": t.get("caption_bbox")})
     return out
 
 
@@ -504,7 +529,8 @@ def extract_pdf(path: str | Path, page_from: int | None = None,
         combined = list(kept) + [
             {"bbox": tb["bbox"], "is_table": True, "text": tb["md"],
              "kind": tb["kind"], "table": tb.get("table"),
-             "algorithm": tb.get("algorithm"), "lines": []}
+             "algorithm": tb.get("algorithm"), "figure": tb.get("figure"),
+             "caption": tb.get("caption", ""), "lines": []}
             for tb in tables
         ]
         ordered = _order_blocks(combined, rect.width)
@@ -514,6 +540,7 @@ def extract_pdf(path: str | Path, page_from: int | None = None,
                 merged.append({"bbox": b["bbox"], "text": b["text"], "is_table": True,
                                "kind": b.get("kind", "table"),
                                "table": b.get("table"), "algorithm": b.get("algorithm"),
+                               "figure": b.get("figure"), "caption": b.get("caption", ""),
                                "math_ratio": mathify.math_coverage(b["text"]),
                                "size": body, "bold": False})
                 continue
@@ -544,12 +571,44 @@ def extract_pdf(path: str | Path, page_from: int | None = None,
             mrec["kind_guess"] = "equation" if mathify.is_display_equation(text, math_ratio) else "text"
             merged.append(mrec)
 
+        # 被表格/图带走的题注：按 bbox 记住，生成段落时跳过（题注文本会渲染在
+        # 表格的 .tcap 或图的 .figcap 里，由翻译整块处理，不再单独成段）
+        absorbed_captions: set = set()
+        for tb in tables:
+            cap = tb.get("caption")
+            if not cap:
+                continue
+            best = None
+            for b in merged:
+                if b.get("is_table"):
+                    continue
+                if _caption_like(b) and (best is None or abs(b["bbox"][1] - tb["bbox"][1])
+                                         < abs(best["bbox"][1] - tb["bbox"][1])):
+                    best = b
+            if best is not None:
+                absorbed_captions.add(best["bbox"])
+
         for b in merged:
             idx += 1
+            # 题注已被表格/图吸收（渲染成 .tcap / .figcap）→ 不要再单独成段，
+            # 否则同一句题注会出现两次
+            if b.get("bbox") in absorbed_captions:
+                continue
             if b.get("is_table"):
                 # 伪代码与表格都算"结构化块"，但**处理方式完全不同**：
                 # 伪代码按行保留（行号 + 缩进表达层级），绝不能网格化；
                 # 表格则要网格化才能表达跨列与列对齐。
+                if b.get("kind") == "figure" and b.get("figure"):
+                    fig = b["figure"]
+                    paragraphs.append({
+                        "id": f"p{idx:04d}", "page": pno, "page_end": pno,
+                        "kind": "figure", "level": 0,
+                        "text": fig.get("caption", ""),
+                        "math_ratio": round(b["math_ratio"], 3),
+                        "bbox": [round(v, 1) for v in b["bbox"]],
+                        "figure": fig,
+                    })
+                    continue
                 is_alg = b.get("kind") == "algorithm" and b.get("algorithm")
                 paragraphs.append({
                     "id": f"p{idx:04d}", "page": pno, "page_end": pno,
@@ -562,6 +621,7 @@ def extract_pdf(path: str | Path, page_from: int | None = None,
                     # 渲染也靠它出真正的 <table>（markdown 表达不了跨列的表头）。
                     **({"table": b["table"]} if (b.get("table") and not is_alg) else {}),
                     **({"algorithm": b["algorithm"]} if is_alg else {}),
+                    **({"caption": b["caption"]} if b.get("caption") else {}),
                 })
                 continue
             kind, level = _classify(b["text"], b["size"], body, b["bold"],

@@ -490,12 +490,34 @@ def main() -> None:
         put(76, 238, "Llama   1.00   66")
         rule(246)
         put(120, 266, "Table 1: Latency and rounds.", 8)
-        # ③ 挂 Figure 题注的区域：坐标轴网格线 + 刻度数字（不是表格）
-        for yy in (300, 320, 340):
+        # ③ 两列表：左列是短符号，右列是**长描述文本**（回归用）。
+        #    曾经因为"按词最多的行定列"，描述行有 8 个词 → 被切成 9 列，
+        #    描述被拆成 `degree bound of | traversed | nodes | in HNSW | search`。
+        #    正确列数是 2 —— 靠"每行都空着的纵向走廊"来定列。
+        rule(300, 72, 400)
+        put(76, 314, "Symbol", 9); put(160, 314, "Description", 9)
+        rule(320, 72, 400)
+        for i, (sym, desc) in enumerate([
+                ("M", "degree bound of traversed nodes in HNSW search"),
+                ("ef", "size of dynamic candidate list in HNSW search"),
+                ("efn", "size of directional filter"),
+        ]):
+            put(76, 336 + i * 12, sym, 9)
+            put(160, 336 + i * 12, desc, 9)
+        rule(380, 72, 400)
+        put(150, 396, "Table 2: Summary of Notation.", 8)
+        # ④ 挂 Figure 题注的区域：坐标轴网格线 + 刻度数字（不是表格）
+        for yy in (420, 440, 460):
             rule(yy, 72, 220)
         for i, t in enumerate(["0.04", "0.08", "0.12"]):
-            put(78, 314 + i * 20, t, 8)
-        put(90, 360, "Figure 1: Latency breakdown.", 8)
+            put(78, 432 + i * 16, t, 8)
+        put(90, 490, "Figure 1: Latency breakdown.", 8)
+        # ⑤ 纯图形：坐标轴 + 两个刻度（词数 < 3）→ 图内无可读文字，需要模型写译注
+        for yy in (510, 530, 550):
+            rule(yy, 72, 200)
+        put(78, 522, "0.4", 8)
+        put(78, 540, "0.8", 8)
+        put(90, 580, "Figure 2: A purely graphical plot.", 8)
         docu.save(tmp_pdf)
         docu.close()
 
@@ -509,13 +531,41 @@ def main() -> None:
             check("伪代码按行保留行号", any(x.strip()[:1].isdigit() for x in al), f"{len(al)} 行")
             check("伪代码首行是 Algorithm 标题",
                   bool(al) and al[0].strip().lower().startswith("algorithm"), al[:1])
-        check("有 Table 题注的才是表格", len(bt) == 1, f"{len(bt)} 个")
+        check("有 Table 题注的才是表格", len(bt) == 2, f"{len(bt)} 个")
         if bt:
             g = bt[0]["table"]
             check("表格网格正确", g["columns"] >= 2 and len(g["rows"]) >= 2,
                   f"{g['columns']} 列 × {len(g['rows'])} 行")
+        # 长文本列不能被拆成一堆假列（Compass 第 5 页符号表就是这么被切成 10 列的）
+        sym = next((t["table"] for t in bt
+                    if "Symbol" in str((t["table"]["rows"][0][0] or {}).get("text", ""))), None)
+        check("含长文本列的表格列数正确（2 列，不是被切碎）",
+              bool(sym) and sym["columns"] == 2,
+              f"{sym['columns'] if sym else '?'} 列")
+        if sym:
+            descs = [c["text"] for r in sym["rows"] for c in r
+                     if isinstance(c, dict) and " " in (c.get("text") or "")]
+            check("长描述保持为一个单元格（没被拆词）",
+                  any(d.count(" ") >= 4 for d in descs), descs[:1])
         # 挂 Figure 题注的区域不能是表格（坐标轴网格线会围出"闭合单元格"）
-        check("挂 Figure 题注的图没被当成表格", len(bt) <= 1, f"{len(bt)} 个")
+        check("挂 Figure 题注的图没被当成表格", len(bt) <= 2, f"{len(bt)} 个")
+        # 图：要框起来（含图题），纯图形时给译注 —— 参照成品级对照稿的做法
+        bf = [p for p in bdata["paragraphs"] if p.get("kind") == "figure"]
+        check("图被识别为 figure 段落（不是丢掉）", len(bf) == 2, f"{len(bf)} 个")
+        check("图题跟着图走", all((p.get("figure") or {}).get("caption") for p in bf))
+        graphic = [p for p in bf if not ((p.get("figure") or {}).get("content") or [])]
+        check("纯图形图：图内无文字（留给模型写译注）", len(graphic) == 1,
+              f"{len(graphic)} 个 / 共 {len(bf)}")
+        # 协议：图题必须有；译注要带回来
+        check("图缺图题时拒绝套用",
+              T.apply_figure({"caption": "Figure 1: x"}, {"content": ["a"]}) is None)
+        fig_ok = T.apply_figure({"caption": "Figure 1: x", "content": []},
+                                {"caption": "图 1：x", "content": [],
+                                 "note": "〔译注：原文此处为一幅示意图〕"})
+        check("图译文保留译注", (fig_ok or {}).get("note", "").startswith("〔译注"))
+        # 表题：跟着表格一起翻
+        check("表格带上了题注", any(p.get("caption") for p in bt),
+              next((p.get("caption") for p in bt if p.get("caption")), "(无)"))
         # 协议健壮性
         a2 = {"lines": ["1 a", "2 b", "3 c"]}
         check("伪代码行数不符时拒绝套用",

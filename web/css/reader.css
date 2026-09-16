@@ -32,9 +32,14 @@
                "Microsoft YaHei", "PingFang SC", "Noto Sans CJK SC", serif;
   --font-en: var(--font-main);
   --font-zh: var(--font-main);
-  --font-mono: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
+  /* 等宽字体：Consolas 必须排第一 —— 原来的 "SFMono-Regular" 是 macOS 字体，
+     Windows 上直接跳过它落到默认等宽，观感很差（用户实测反馈）。 */
+  --font-mono: Consolas, "Cascadia Mono", "Courier New", "Microsoft YaHei",
+               ui-monospace, Menlo, monospace;
 
   --fs-en: 15.5px;
+  --fs-block: 13.5px;      /* 表格/伪代码/图框字号（跟随 A+/A- 缩放） */
+  --fs-block-sm: 12.5px;   /* 表题/图题这类次要文字 */
   --fs-zh: 15.5px;
   --lh: 1.8;
   --gap: 28px;
@@ -317,12 +322,13 @@ blockquote {
 .tblbox { overflow-x: auto; }
 
 /* 伪代码 / 算法块：按行渲染，保留行号与缩进。
-   用等宽字体是刻意的 —— 对齐的赋值符（←）和行号是伪代码的主要视觉结构。 */
+   字体**必须显式指定 Consolas 优先**：`ui-monospace` 在 Windows 上映射不到
+   等宽字体，会落到一个很丑的默认字体（用户实测反馈"太难看了"）。
+   中文注释用系统的等宽/雅黑回退，最后兜底 generic monospace。 */
 .algobox {
-  font-family: ui-monospace, SFMono-Regular, "Cascadia Mono", Consolas,
-               "Liberation Mono", Menlo, monospace;
-  font-size: 12.4px;
-  line-height: 1.62;
+  font-family: var(--font-mono);
+  font-size: var(--fs-block);
+  line-height: 1.6;
   background: var(--eqbg);
   border: 1px solid var(--line);
   border-left: 3px solid var(--accent);
@@ -331,15 +337,51 @@ blockquote {
   overflow-x: auto;
   /* 保住前导空格（缩进层级）—— 这是伪代码能读的前提 */
   white-space: pre;
-  tab-size: 2;
+  tab-size: 4;
 }
 .algline { min-height: 1em; }
-/* 注释用的是 // —— 给它一点弱化，正文（语句本身）保持正常对比度 */
-.algobox .algline { color: var(--fg); }
+.algobox .pt { font-weight: 700; color: var(--accent); margin-bottom: 4px; }
+.algobox .pt { font-weight: 700; color: var(--accent); margin-bottom: 4px; }
+
+/* —— 图框：把"图"框起来（参照成品级对照稿的做法）——
+   图内文字 → 译注（可选）→ 图题（虚线隔开）。
+   图是纯图形时只有图题 + 译注，读者能知道这里原本是一张什么图。 */
+.figbox {
+  border: 1px solid var(--boxbd);
+  border-radius: 6px;
+  background: var(--box);
+  padding: 9px 12px;
+  font-size: var(--fs-block);
+  line-height: 1.7;
+  margin: 6px 0;
+  overflow-x: auto;
+}
+.figbox .fline { margin: 1px 0; }
+.figbox .figcap {
+  margin-top: 7px;
+  font-size: var(--fs-block-sm);
+  color: var(--muted);
+  border-top: 1px dashed var(--rowline);
+  padding-top: 5px;
+}
+/* 译注：左侧竖线的弱化块 —— 提示"这是译者补的说明，不是原文" */
+.note {
+  font-size: var(--fs-block-sm);
+  color: var(--muted);
+  border-left: 3px solid var(--line);
+  padding-left: 10px;
+  margin: 8px 0;
+}
+/* 表题：贴在表格上方，与表格同一格 */
+.tcap {
+  margin: 2px 0 6px;
+  font-size: var(--fs-block-sm);
+  color: var(--muted);
+}
 table.t, .en table, .zh table, .bcell table {
   border-collapse: collapse;
   width: 100%;
-  font-size: 13.2px;
+  font-size: var(--fs-block);
   border-top: 1.6px solid var(--fg);
   border-bottom: 1.6px solid var(--fg);
 }

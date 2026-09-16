@@ -253,7 +253,16 @@
   function fillAlgorithmCell(cell, lines) {
     if (!lines || !lines.length) return false;
     var box = el('div', 'algobox');
-    for (var i = 0; i < lines.length; i++) {
+    var start = 0;
+    // 首行是 `Algorithm 1: ...` / `Protocol 2:` 这类标题 → 拎出来当 accent 标题，
+    // 与成品级对照稿的协议块视觉一致（.pt）
+    if (/^\s*(Algorithm|Protocol|算法|协议)\s*\d+\s*[:：]/i.test(lines[0])) {
+      var t = el('div', 'pt');
+      t.textContent = lines[0].trim();
+      box.appendChild(t);
+      start = 1;
+    }
+    for (var i = start; i < lines.length; i++) {
       var line = document.createElement('div');
       line.className = 'algline';
       // 用 textContent：伪代码里的 < > ← 等符号不该被当成 HTML/Markdown
@@ -264,9 +273,52 @@
     return true;
   }
 
+  /**
+   * 图框：把"图"框起来 —— 图内文字 + 图题 + 可选的译注。
+   *
+   * 参照成品级对照稿的做法（`.figbox` / `.figcap` / `.note`）：
+   * 图里的文字（图例、示意框）单独成块，图题在底部用虚线隔开，
+   * 图是纯图形时显示模型写的译注（〔译注：原文此处为一幅…〕）——
+   * 这样读者知道"这里原本有一张图、它是关于什么的"，而不是一片空白。
+   */
+  function fillFigureCell(cell, fig) {
+    if (!fig || !fig.caption) return false;
+    var box = el('div', 'figbox');
+    (fig.content || []).forEach(function (line) {
+      var d = el('div', 'fline');
+      d.textContent = line;
+      box.appendChild(d);
+    });
+    if (fig.note) {
+      var note = el('div', 'note');
+      note.textContent = fig.note;
+      box.appendChild(note);
+    }
+    var cap = el('div', 'figcap');
+    cap.textContent = fig.caption;
+    box.appendChild(cap);
+    cell.appendChild(box);
+    return true;
+  }
+
+  /** 表题：贴在表格上方（.tcap），与表格同一格，左右两栏各自一份 */
+  function tableCaption(cell, caption) {
+    if (!caption) return;
+    var d = el('div', 'tcap');
+    d.textContent = caption;
+    cell.appendChild(d);
+  }
+
   function fillCell(cell, para, kind) {
     var text = para.text || '';
-    if (kind === 'table' && para.table && fillTableCell(cell, para.table)) return;
+    if (kind === 'figure') {
+      var fig = para.figure;
+      if (fig && fig.caption && fillFigureCell(cell, fig)) return;
+    }
+    if (kind === 'table' && para.table) {
+      tableCaption(cell, para.caption);
+      if (fillTableCell(cell, para.table)) return;
+    }
     if (kind === 'algorithm') {
       var lines = (para.algorithm && para.algorithm.lines) || String(text).split('\n');
       if (fillAlgorithmCell(cell, lines)) return;
@@ -377,17 +429,21 @@
       var rebuilt = typeof tr.en === 'string' && tr.en.trim() && tr.en !== p.text;
       if (rebuilt) {
         fillCell(en, { kind: kind, text: state.showRaw ? p.text : tr.en, table: p.table,
+                    caption: p.caption,
+                    figure: tr.en_figure || p.figure,
                     algorithm: (state.showRaw ? p.algorithm : (tr.en_algorithm || p.algorithm)) }, kind);
         en.dataset.rebuilt = '1';
         en.title = '左栏为「重建原文」（公式已还原为标准 LaTeX）。点顶栏「原始抽取」可切回 PDF 直抽的原始文本。';
         switches.push({ cell: en, para: p, fixed: tr.en, table: p.table,
+                       caption: p.caption, figure: tr.en_figure || p.figure,
                        algorithm: tr.en_algorithm || p.algorithm });
       } else {
         fillCell(en, p, kind);
       }
 
       if (tr.zh) {
-        fillCell(zh, { kind: kind, text: tr.zh, table: tr.table, algorithm: tr.algorithm }, kind);
+        fillCell(zh, { kind: kind, text: tr.zh, table: tr.table, caption: tr.caption,
+                      figure: tr.figure, algorithm: tr.algorithm }, kind);
         if (tr.terms && tr.terms.length) {
           highlightTerms(en, tr.terms, 'en');
           highlightTerms(zh, tr.terms, 'zh');
@@ -435,6 +491,7 @@
             fillCell(s.cell, s.para, s.para.kind || 'text');
           } else {
             fillCell(s.cell, { kind: s.para.kind, text: s.fixed, table: s.table,
+                           caption: s.caption, figure: s.figure,
                            algorithm: s.algorithm }, s.para.kind || 'text');
           }
         });
@@ -446,6 +503,10 @@
         var r = document.documentElement.style;
         r.setProperty('--fs-en', (15.5 * state.scale).toFixed(2) + 'px');
         r.setProperty('--fs-zh', (15.5 * state.scale).toFixed(2) + 'px');
+        // 结构化块（表格 / 伪代码 / 图框 / 表题）也一起缩放 ——
+        // 它们原来是写死的 px，用户把正文字号调大后会显得明显偏小。
+        r.setProperty('--fs-block', (13.5 * state.scale).toFixed(2) + 'px');
+        r.setProperty('--fs-block-sm', (12.5 * state.scale).toFixed(2) + 'px');
         store.set('ee-scale', String(state.scale));
         return state.scale;
       },

@@ -51,6 +51,7 @@ PyMuPDF 的 `find_tables(strategy="lines")` 要求"闭合单元格"，对这种�
 """
 from __future__ import annotations
 
+import math
 import re
 from typing import Any
 
@@ -58,14 +59,19 @@ _ROW_GAP_RATIO = 0.8        # 行距小于 0.8×字号 → 同一逻辑行的续
 _MIN_RULE_WIDTH = 30.0      # 太短的线段不算横线
 _MIN_RULE_COUNT = 2         # 至少两条横线才可能是表格
 _MIN_TABLE_HEIGHT = 15.0
+_MIN_CORRIDOR = 3.0      # 走廊宽度小于这个值不算列边界（词间距本身就有 2–3pt）
+_MAX_FIG_GAP = 55.0      # 图内元素之间的最大空白；超过就认为越过了图边界
+_MAX_FIG_GAP = 55.0      # 图内元素之间的最大空白；超过就认为越过了图边界
 
 # 伪代码关键字（用于把 algorithm 环境从表格候选里摘出来）
 _PSEUDO_KEYWORDS = ("for", "foreach", "while", "if", "then", "do", "return",
                     "elif", "else", "←", "<-")
 
-# 题注首词：Table N: / Figure N:（也认中文"表/图"）
-_TABLE_CAPTION_RE = re.compile(r"^\s*(Table|TABLE|表)\s*\d", re.I)
-_FIGURE_CAPTION_RE = re.compile(r"^\s*(Figure|Fig\.?|FIGURE|图)\s*\d", re.I)
+# 题注首词：`Table 1:` / `Figure 2.`（也认中文"表/图"）。
+# ⚠️ 编号后面**必须**跟 `:` 或 `.` —— 否则正文里的
+#    "Fig. 2 shows the architecture ..." 会被当成图题（实测 Compass 第 5、7 页各中一次）。
+_TABLE_CAPTION_RE = re.compile(r"^\s*(Table|TABLE|表)\s*\d+\s*[:：.]", re.I)
+_FIGURE_CAPTION_RE = re.compile(r"^\s*(Figure|Fig\.?|FIGURE|图)\s*\d+\s*[:：.]", re.I)
 
 
 # --------------------------------------------------------------- 几何基础
@@ -87,17 +93,34 @@ def _rules(page: Any) -> list[tuple[float, float, float]]:
 
 
 def _has_text_between(page: Any, y_a: float, y_b: float, x0: float, x1: float) -> bool:
-    """两条横线之间有没有文字（用来判断它们是否属于同一个块）。"""
+    """两条横线之间有没有**正文**（用来判断它们是否属于同一个块）。
+
+    ⚠️ 题注行不算正文：表格的 `Table N:` 题注常常正好落在两块之间，
+    如果把题注当成"内容"，两张相邻的表就永远切不开、会被并成一块
+    （踩过：自造样张里 Table 1 的题注挡在伪代码块与 Table 2 之间）。
+    """
     if y_b - y_a < 8.0:
         return True          # 挨得很近，算同一块
     try:
         words = page.get_text("words")
     except Exception:  # noqa: BLE001
         return True
-    for w in words:
-        if x0 - 4 <= w[0] <= x1 + 4 and y_a + 1.0 < w[1] < y_b - 1.0:
-            return True
-    return False
+    inside = [w for w in words
+              if x0 - 4 <= w[0] <= x1 + 4 and y_a + 1.0 < w[1] < y_b - 1.0]
+    if not inside:
+        return False
+    # 按 y 聚成行，整行都是题注的忽略掉
+    lines: list[list] = []
+    for w in sorted(inside, key=lambda w: (round(w[1], 1), w[0])):
+        if lines and abs(w[1] - lines[-1][0][1]) <= 3.0:
+            lines[-1].append(w)
+        else:
+            lines.append([w])
+    for ln in lines:
+        text = " ".join(w[4] for w in ln).strip()
+        if not looks_caption(text):
+            return True      # 有非题注的正文 → 是同一块的内容
+    return False             # 夹着的全是题注 → 两块，切开
 
 
 def _split_regions(page: Any, x0: float, x1: float, ys: list[float]) -> list[dict]:
@@ -176,7 +199,79 @@ def _physical_lines(words: list[dict], size: float) -> list[dict]:
 # --------------------------------------------------------------- 列与单元格
 
 def _slots(lines: list[dict]) -> list[tuple[float, float]]:
-    """列槽 = 用"词数最多"的表体行切出的区间。"""
+    """列槽 = 用**纵向走廊**切出来的区间：每行在那个 x 段都空着，才算是列边界。
+
+    ⚠️ 早先的做法是"拿词数最多的那一行，按相邻词的空档中点切列"。它在数值表上没问题，
+    但在**含长文本列**的表上会彻底崩：Compass 第 5 页的符号表（真实只有 2 列
+    `Symbol | Description`）里，Description 那一行有 12 个词，于是被切成 10 列 ——
+    描述文字被拆成 `degree bound of | traversed | nodes | in HNSW | search`
+    （用户实测截图反馈："你是识别不出来这个表格有几列吗？"）。
+
+    走廊法的好处：**文本列里的词虽然多，但每个词的 x 位置逐行不同**，
+    不存在"每行都空"的走廊，所以不会被切成碎片；而真正的列边界
+    （符号列与描述列之间空出 353..365）在每一行都空着，会被稳定识别。
+    """
+    if not lines:
+        return []
+    # 每行的"空档"区间（相邻两词之间）
+    row_gaps: list[list[tuple[float, float]]] = []
+    for ln in lines:
+        ws = ln["words"]
+        if len(ws) < 2:
+            row_gaps.append([])
+            continue
+        row_gaps.append([(ws[i]["x1"], ws[i + 1]["x0"])
+                         for i in range(len(ws) - 1)
+                         if ws[i + 1]["x0"] > ws[i]["x1"]])
+    n = len(lines)
+    # 允许极少数行"挡住"走廊（例如某行文字特别长），但绝大多数行必须让开
+    need = max(1, math.ceil(n * 0.9))
+
+    lo = min((w["x0"] for ln in lines for w in ln["words"]), default=0.0)
+    hi = max((w["x1"] for ln in lines for w in ln["words"]), default=0.0)
+    if hi <= lo:
+        return []
+
+    # 以 1pt 为步长扫描：这个位置被多少行"空着"
+    step = 1.0
+    corridors: list[tuple[float, float]] = []
+    open_from: float | None = None
+    x = lo
+    while x <= hi + step:
+        free = sum(1 for gaps in row_gaps
+                   if any(a - 0.5 <= x <= b + 0.5 for a, b in gaps))
+        if free >= need:
+            if open_from is None:
+                open_from = x
+        else:
+            if open_from is not None:
+                corridors.append((open_from, x))
+                open_from = None
+        x += step
+    if open_from is not None:
+        corridors.append((open_from, hi + step))
+
+    # 太窄的不算走廊（词间距本身就有 2–3pt）
+    bounds = [(a + b) / 2 for a, b in corridors if b - a >= _MIN_CORRIDOR]
+    if len(bounds) < 1:
+        # 走廊法切不出列（多见于"某一列文字折行、占满整宽"的表，如 Compass 的 Table 3），
+        # 退回"最宽行"的切法 —— 它在**数值表**上是可靠的。
+        return _slots_by_widest_row(lines)
+    out: list[tuple[float, float]] = []
+    start = lo - 8
+    for b in bounds:
+        out.append((start, b))
+        start = b
+    out.append((start, hi + 8))
+    return out
+
+
+def _slots_by_widest_row(lines: list[dict]) -> list[tuple[float, float]]:
+    """回退方案：拿词数最多的那一行，按相邻词的空档中点切列。
+
+    ⚠️ 只能用在数值/短单元格的表上：含长文本列时会把描述文字拆成一堆假列
+    （Compass 第 5 页符号表就是这么被切成 10 列的）。
+    """
     if not lines:
         return []
     ws = max(lines, key=lambda ln: len(ln["words"]))["words"]
@@ -480,7 +575,156 @@ def algorithm_lines(page: Any, region: dict, size: float = 10.0) -> list[str]:
     return out
 
 
-def _caption_kind(captions: list[dict] | None, region: dict) -> str | None:
+def looks_caption(text: str) -> bool:
+    """这段文字像不像题注。
+
+    ⚠️ 先剥掉开头的一串数字/点：PDF 里题注经常和上一行的刻度数字粘在一起
+    （实测抽出来是 `0.12Figure 1: Latency breakdown.`），
+    直接用 `match` 会因为开头是 `0.12` 而漏掉整个题注。
+    """
+    t = re.sub(r"^[\d\s.,%)\-]+", "", text or "").strip()
+    return bool(_TABLE_CAPTION_RE.match(t) or _FIGURE_CAPTION_RE.match(t))
+
+
+def looks_caption(text: str) -> bool:
+    """这段文字像不像题注。
+
+    ⚠️ 先剥掉开头的一串数字/点：PDF 里题注经常和上一行的刻度数字粘在一起
+    （实测抽出来是 `0.12Figure 1: Latency breakdown.`），
+    直接用 `match` 会因为开头是 `0.12` 而漏掉整个题注。
+    """
+    t = re.sub(r"^[\d\s.,%)\-]+", "", text or "").strip()
+    return bool(_TABLE_CAPTION_RE.match(t) or _FIGURE_CAPTION_RE.match(t))
+
+
+def _norm_ws(s: str) -> str:
+    """题注/单元格文本里的连续空格（PyMuPDF 常见）压成单个。"""
+    return re.sub(r"\s+", " ", s or "").strip()
+
+
+def _caption_near(captions: list[dict] | None, region: dict) -> dict | None:
+    """返回区域上下 40pt 内那个题注本身（含文本与 bbox）。
+
+    题注是**最可靠的判据**（`Table N:` vs `Figure N:`），同时也直接拿来当
+    表格标题 / 图题用 —— 所以这里返回题注对象而不只是类型。
+    """
+    if not captions:
+        return None
+    top, bot = region["ys"][0], region["ys"][-1]
+    x0, x1 = region["x0"], region["x1"]
+    best: dict | None = None
+    for cap in captions:
+        cy = cap["bbox"][1]
+        if not ((top - 40 <= cy <= top + 4) or (bot - 4 <= cy <= bot + 40)):
+            continue
+        if cap["bbox"][2] < x0 or cap["bbox"][0] > x1:
+            continue
+        if best is None or cy > best["bbox"][1]:
+            best = cap
+    return best
+
+
+def figure_area(page: Any, caption: dict, captions: list[dict] | None = None,
+                max_up: float = 330.0) -> dict:
+    """圈出图题上方那块图所占的纵向范围（用来收集"图里的文字"）。
+
+    图里的文字（坐标轴刻度、图例、示意图里的字）不能当正文段落去翻 —— 它们属于图。
+
+    ⚠️ 关键是**别越过上方另一张图**：早先简单地"从图题往上取 330pt"，
+    结果把上一张图的刻度也圈进来，纯图形的那张于是"看起来有文字"、
+    模型就不会写译注了（踩过）。这里改成从图题往上逐块走，
+    遇到明显的空白（> _MAX_FIG_GAP）就停 —— 空白就是图与图/图与正文的界。
+    """
+    cap_top = caption["bbox"][1]
+    x0, x1 = caption["bbox"][0], caption["bbox"][2]
+    try:
+        boxes: list[tuple] = []
+        for d in page.get_drawings():
+            r = d.get("rect")
+            if r is not None:
+                boxes.append((r.x0, r.y0, r.x1, r.y1))
+        for img in page.get_image_info():
+            b = img.get("bbox")
+            if b:
+                boxes.append(tuple(b))
+    except Exception:  # noqa: BLE001
+        boxes = []
+    # 边界一：上面若还有**另一条题注**，它就是上一张图的结束 —— 到此为止。
+    # 这比"按空白宽度猜"可靠得多（实测两张图只隔 50pt 时，
+    # 单纯用空白阈值会把上一张图的刻度一起圈进来）。
+    ceiling = cap_top - max_up
+    for other in captions or []:
+        if other is caption:
+            continue
+        oy = other["bbox"][3]
+        if ceiling < oy < cap_top:
+            ceiling = max(ceiling, oy)
+    near = [b for b in boxes
+            if b[3] <= cap_top + 2 and b[2] >= x0 and b[0] <= x1
+            and b[1] >= ceiling]
+    near.sort(key=lambda b: b[3], reverse=True)      # 从最靠近图题的往上走
+    lo = cap_top
+    keep: list[tuple] = []
+    for bx0, by0, bx1, by1 in near:
+        if lo - by1 > _MAX_FIG_GAP:
+            break            # 空白太宽 → 上面那一块不是同一张图
+        lo = min(lo, by0)
+        keep.append((bx0, by0, bx1, by1))
+    # 横向也要用**图自己的范围**：题注往往比图窄（缩进过），
+    # 只按题注的 x 取词会把坐标轴刻度挡在外面（踩过：整张图变成"无文字"）。
+    if keep:
+        x0 = min([x0] + [b[0] for b in keep])
+        x1 = max([x1] + [b[2] for b in keep])
+    return {"x0": x0, "x1": x1, "top": max(lo, ceiling), "bottom": cap_top}
+
+
+def figure_text(page: Any, area: dict, size: float = 10.0) -> list[str]:
+    """取图范围内的文字行（避开图题本身）。图是纯图形时返回空列表。"""
+    words = []
+    try:
+        for w in page.get_text("words"):
+            if (area["x0"] - 6 <= w[0] <= area["x1"] + 6
+                    and area["top"] <= w[1] <= area["bottom"] - 4):
+                words.append({"x0": float(w[0]), "x1": float(w[2]),
+                              "y": float(w[1]), "t": str(w[4])})
+    except Exception:  # noqa: BLE001
+        return []
+    if len(words) < 3:
+        return []
+    lines: list[str] = []
+    for ln in _physical_lines(words, size):
+        text = " ".join(w["t"] for w in ln["words"]).strip()
+        if text:
+            lines.append(text)
+    return lines[:40]
+
+
+def extract_figures(page: Any, captions: list[dict] | None,
+                    used: list[dict], size: float = 10.0) -> list[dict]:
+    """抽取"图"→ [{bbox, kind:"figure", caption, content}]。
+
+    为什么值得单独抽：图里的文字（图例、示意文字）以前要么被当正文翻掉、
+    要么被丢弃（挂了 `Figure` 题注的区域直接不处理）。参照成品稿的做法是
+    **把图框起来**：图内的文字照翻，图题也翻；图是纯图形时给一条**译注**
+    说明"这里原本是一幅什么图"。
+
+    `used` 是已经识别成表格/伪代码的区域，避免把图上的网格线再认一遍。
+    """
+    out: list[dict] = []
+    for cap in captions or []:
+        if not _FIGURE_CAPTION_RE.match(cap.get("text") or ""):
+            continue
+        if any(_rects_overlap(cap["bbox"], u["bbox"]) for u in used):
+            continue
+        area = figure_area(page, cap, captions)
+        content = figure_text(page, area, size)
+        out.append({"bbox": (area["x0"], area["top"], area["x1"], cap["bbox"][3]),
+                    "kind": "figure",
+                    "figure": {"caption": cap["text"], "content": content},
+                    "caption_bbox": tuple(cap["bbox"]),
+                    "note": f"图内文字 {len(content)} 行" if content else "纯图形（需模型写译注）"})
+    return out
+
     """区域上下 40pt 内有没有题注，是 Table 还是 Figure。
 
     这是**最可靠的判据**：论文里真表格一定有 `Table N:` 题注，
@@ -505,6 +749,24 @@ def _caption_kind(captions: list[dict] | None, region: dict) -> str | None:
     return None
 
 
+def _caption_kind(captions: list[dict] | None, region: dict) -> str | None:
+    """区域上下 40pt 内有没有题注，是 Table 还是 Figure。
+
+    这是**最可靠的判据**：论文里真表格一定有 `Table N:` 题注，
+    而图（含坐标轴网格线、散落的刻度标签）挂的是 `Figure N:`。
+    实测用它一次就把 7 个误判（正文/图表刻度）全部摘掉，7 个真表格全部保留。
+    """
+    cap = _caption_near(captions, region)
+    if not cap:
+        return None
+    text = _norm_ws(cap.get("text") or "")
+    if _TABLE_CAPTION_RE.match(text):
+        return "table"
+    if _FIGURE_CAPTION_RE.match(text):
+        return "figure"
+    return None
+
+
 def _looks_like_table(grid: dict, limit_cols: int = 8) -> bool:
     """没有题注时的严格回退：列数适中、行数够、格子填得比较满。
 
@@ -518,6 +780,23 @@ def _looks_like_table(grid: dict, limit_cols: int = 8) -> bool:
     cells = [c for r in rows for c in r if isinstance(c, dict)]
     filled = sum(1 for c in cells if (c.get("text") or "").strip())
     return bool(cells) and filled / len(cells) >= 0.55
+
+
+def _drop_caption_lines(lines: list[dict]) -> list[dict]:
+    """把题注行从表体里剔掉。
+
+    `_words_in` 会向下多取几个点（怕漏掉贴着横线的内容），于是**表格下方的
+    `Table N:` 题注会被当成表体的一行**参与列切分 —— 题注的文字分布跟表体完全不同，
+    会在走廊计算里制造出一堆假边界（实测：自造的符号表因此从 2 列变成 8 列）。
+    题注本来由 extract.py 单独抽成 caption 段落，这里剔掉即可。
+    """
+    out: list[dict] = []
+    for ln in lines:
+        text = " ".join(w["t"] for w in ln["words"]).strip()
+        if looks_caption(text):
+            continue
+        out.append(ln)
+    return out
 
 
 def extract_tables(page: Any, size: float = 10.0,
@@ -543,11 +822,16 @@ def extract_tables(page: Any, size: float = 10.0,
                             "algorithm": {"lines": lines},
                             "note": "伪代码：" + "、".join(why)})
                 continue
-        cap_kind = _caption_kind(captions, reg)
+        cap = _caption_near(captions, reg)
+        cap_kind = None
+        if cap:
+            text = _norm_ws(cap.get("text") or "")
+            cap_kind = ("table" if _TABLE_CAPTION_RE.match(text)
+                        else "figure" if _FIGURE_CAPTION_RE.match(text) else None)
         if cap_kind == "figure":
-            continue        # 挂 Figure 题注 → 是图，交给普通段落
+            continue        # 挂 Figure 题注 → 是图，交给 extract_figures
 
-        lines = _physical_lines(words, size)
+        lines = _drop_caption_lines(_physical_lines(words, size))
         if not lines:
             continue
         ys = reg["ys"]
@@ -578,7 +862,12 @@ def extract_tables(page: Any, size: float = 10.0,
         if cap_kind != "table" and not _looks_like_table(table):
             continue        # 既没 Table 题注、结构又不像表格 → 丢给普通段落
         out.append({"bbox": bbox_full, "kind": "table", "table": table,
+                    "caption": (_norm_ws(cap["text"]) if cap_kind == "table" and cap else ""),
+                    "caption_bbox": (tuple(cap["bbox"]) if cap_kind == "table" and cap else None),
                     "note": "有 Table 题注" if cap_kind == "table" else "结构判定"})
     out.extend(_ruled_tables(page, out, captions))
+    # 图：挂在 Figure 题注上的那块（含图内文字）。放在表格之后，
+    # 因为要按已识别的表格/伪代码区域排除重叠。
+    out.extend(extract_figures(page, captions, out, size))
     out.sort(key=lambda t: (t["bbox"][1], t["bbox"][0]))
     return out

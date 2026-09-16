@@ -100,6 +100,15 @@ class MockClient:
             # 第 3 次调用时故意丢掉中间一段，触发"部分缺失 → 单独重试"分支
             if self.calls == 3 and len(paras) >= 3 and i == 1:
                 continue
+            # 图：返回图题译文 + 图内文字 + （图内无文字时的）译注
+            fig = p.get("figure")
+            if isinstance(fig, dict) and fig.get("caption"):
+                content = [MOCK_TAG + str(x) for x in (fig.get("content") or [])]
+                note = "" if content else MOCK_TAG + "〔译注：原图为一幅示意图〕"
+                items.append({"id": p.get("id"),
+                              "figure": {"caption": MOCK_TAG + str(fig["caption"]),
+                                         "content": content, "note": note}})
+                continue
             # 伪代码：按行返回，行数保持一致；只给注释/说明行加标记（模拟"只翻注释"）
             alg = p.get("algorithm")
             if isinstance(alg, dict) and alg.get("lines"):
@@ -129,6 +138,8 @@ class MockClient:
                         terms.append({"en": w, "zh": "模拟术语"})
                 rec_t = {"id": p.get("id"), "table": {"rows": new_rows},
                          "terms": terms[:4]}
+                if p.get("caption"):
+                    rec_t["caption"] = MOCK_TAG + str(p["caption"])
                 items.append(rec_t)
                 continue
             text = p.get("en", "")

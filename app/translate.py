@@ -29,6 +29,15 @@ OUTPUT_SPEC = r"""
   按上下文还原成最可能的 LaTeX，**绝不在 zh 里保留 `⟦?⟧`**；
 - 若该段是纯公式（$$...$$），en 与 zh 都原样返回该公式，不要添加解释；
 - terms 只列该段的关键术语（最多 4 个，en/zh 对应），没有则给空数组 []；
+- **kind 为 `figure` 的段落是图**：输入给的是 `figure.caption`（图题）与
+  `figure.content`（图内文字，可能为空数组）。返回 `"figure": {"caption": "图题译文", "content": [...], "note": "..."}`；
+  **`caption` 必须有**（`Figure 1:` 译成 `图 1：`）；
+  `content` 是图里的文字（图例、示意文字、示意框图），逐条翻译，允许重新断行；
+  **图里没有可读文字时（`content` 为空）必须写 `note`** —— 用一条译注说明
+  “这里原本是一幅什么图、说明了什么”，形如
+  `〔译注：原文此处为一幅 HNSW 多层图示意，含图例六项：已访问节点、…〕`。
+  依据只能是图题与上下文，**不要编造图里没有的数字或结论**；
+  图内文字非空时 `note` 给空字符串。
 - **kind 为 `algorithm` 的段落是伪代码，按行处理**：输入给的是 `algorithm.lines`
   （一行的列表，已保留行号与缩进）。返回 `"algorithm": {"lines": [译文行, ...]}`，
   **行数与输入完全一致**，也不要返回 en/zh 字段；
@@ -37,7 +46,8 @@ OUTPUT_SPEC = r"""
 - **kind 为 `table` 的段落要整表翻译**：输入给的是 `table.rows`（二维单元格数组）
   与 `table.columns`/`head_rows`。请返回 `"table": {"rows": [[译文, ...], ...]}`，
   **行列数与输入完全一致**（空的占位格保持为空），不要返回 en/zh 字段；
-  表头同样要翻译（术语与正文保持一致）；数字、单位、模型名、缩写、符号原样保留。。"""
+  表头同样要翻译（术语与正文保持一致）；数字、单位、模型名、缩写、符号原样保留；
+  若输入给了 `caption`（表题），返回时也要带 `caption` 字段（`Table 1:` → `表 1：`）。。"""
 
 # 模型把占位符改写成 `?`（或空括号）时，用于第二次尝试的加强指令
 STRICT_REPAIR_HINT = r"""
@@ -78,6 +88,15 @@ OUTPUT_SPEC_NO_RESTORE = r"""
   按上下文还原成最可能的 LaTeX，**绝不在 zh 里保留 `⟦?⟧`**；
 - 若该段是纯公式（$$...$$），zh 原样返回该公式，不要添加解释；
 - terms 只列该段的关键术语（最多 4 个，en/zh 对应），没有则给空数组 []；
+- **kind 为 `figure` 的段落是图**：输入给的是 `figure.caption`（图题）与
+  `figure.content`（图内文字，可能为空数组）。返回 `"figure": {"caption": "图题译文", "content": [...], "note": "..."}`；
+  **`caption` 必须有**（`Figure 1:` 译成 `图 1：`）；
+  `content` 是图里的文字（图例、示意文字、示意框图），逐条翻译，允许重新断行；
+  **图里没有可读文字时（`content` 为空）必须写 `note`** —— 用一条译注说明
+  “这里原本是一幅什么图、说明了什么”，形如
+  `〔译注：原文此处为一幅 HNSW 多层图示意，含图例六项：已访问节点、…〕`。
+  依据只能是图题与上下文，**不要编造图里没有的数字或结论**；
+  图内文字非空时 `note` 给空字符串。
 - **kind 为 `algorithm` 的段落是伪代码，按行处理**：输入给的是 `algorithm.lines`
   （一行的列表，已保留行号与缩进）。返回 `"algorithm": {"lines": [译文行, ...]}`，
   **行数与输入完全一致**，也不要返回 en/zh 字段；
@@ -102,7 +121,7 @@ OUTPUT_SPEC_RESTORE = r"""
 - items 与输入段落一一对应，id 必须原样返回，顺序一致，不得遗漏；
 - 不要输出 zh 字段，不要翻译，不要增删或改写任何文字；
 - 若某段本来就很规范，en 原样返回即可；
-- **kind 为 `table` / `algorithm` 的段落原样返回**，不要翻译、不要改动单元格。"""
+- **kind 为 `table` / `algorithm` / `figure` 的段落原样返回**，不要翻译、不要改动内容。"""
 
 
 def _chunk(paras: list[dict], batch_size: int, max_chars: int) -> list[list[dict]]:
@@ -171,6 +190,31 @@ def apply_table_rows(grid: dict, translated: Any) -> dict | None:
             "rows": out_rows}
 
 
+def figure_for_prompt(fig: dict) -> dict:
+    """图给模型的形状：图题 + 图内文字（可能是空的）+ 上下文（用于写译注）。"""
+    return {"caption": fig.get("caption", ""),
+            "content": [str(x) for x in (fig.get("content") or [])]}
+
+
+def apply_figure(fig: dict, translated: Any) -> dict | None:
+    """套回模型返回的图块。
+
+    图内文字允许重新断行（它不是伪代码，位置不代表结构），
+    但**图题必须有** —— 没有图题的图块渲染出来是无根之木。
+    """
+    if not isinstance(translated, dict):
+        return None
+    caption = str(translated.get("caption") or "").strip()
+    if not caption:
+        return None
+    content = translated.get("content")
+    if not isinstance(content, list):
+        content = [str(x) for x in (fig.get("content") or [])]
+    return {"caption": caption,
+            "content": [str(x).strip() for x in content if str(x).strip()],
+            "note": str(translated.get("note") or "").strip()}
+
+
 def algorithm_for_prompt(alg: dict) -> dict:
     """伪代码给模型的形状：一行的列表（保序、保行数）。"""
     return {"lines": [str(x) for x in (alg.get("lines") or [])]}
@@ -214,11 +258,18 @@ def _build_messages(batch: list[dict], system_prompt: str, target_lang: str,
         if p.get("kind") == "table" and isinstance(grid, dict) and grid.get("rows"):
             # 表格整块下发：给二维数组而不是拍平的文本，列对齐才不会丢
             item["table"] = table_for_prompt(grid)
+        fig = p.get("figure")
+        if p.get("kind") == "figure" and isinstance(fig, dict) and fig.get("caption"):
+            item["figure"] = figure_for_prompt(fig)
+        cap = p.get("caption")
+        if p.get("kind") == "table" and cap:
+            # 表题跟着表格一起翻，渲染时贴在同一格上方（.tcap）
+            item["caption"] = cap
         alg = p.get("algorithm")
         if p.get("kind") == "algorithm" and isinstance(alg, dict) and alg.get("lines"):
             # 伪代码按行下发：行号与缩进就是它的结构，绝不能拍平或网格化
             item["algorithm"] = algorithm_for_prompt(alg)
-        else:
+        elif p.get("kind") != "figure":
             item["en"] = p["text"]
         payload["paragraphs"].append(item)
     if restore_original:
@@ -305,6 +356,23 @@ def _translate_batch(client: DeepSeekClient, batch: list[dict], settings: dict,
         if not pid:
             continue
         src = src_by_id.get(pid) or {}
+        fig = src.get("figure") if isinstance(src.get("figure"), dict) else None
+        if fig and fig.get("caption"):
+            zh_fig = apply_figure(fig, it.get("figure"))
+            if zh_fig is None:
+                continue          # 没有图题 → 当作没返回
+            rec_f: dict[str, Any] = {
+                "zh": zh_fig["caption"] + ("\n" + "\n".join(zh_fig["content"])
+                                            if zh_fig["content"] else ""),
+                "terms": terms, "figure": zh_fig,
+            }
+            if restore:
+                rec_f["en"] = fig["caption"] + ("\n" + "\n".join(fig.get("content") or [])
+                                                if fig.get("content") else "")
+                rec_f["en_figure"] = fig
+            out[pid] = rec_f
+            new_terms.extend(terms)
+            continue
         alg = src.get("algorithm") if isinstance(src.get("algorithm"), dict) else None
         if alg and alg.get("lines"):
             zh_alg = apply_algorithm_lines(alg, it.get("algorithm"))
@@ -329,6 +397,9 @@ def _translate_batch(client: DeepSeekClient, batch: list[dict], settings: dict,
                 "terms": terms,
                 "table": zh_grid,
             }
+            cap_zh = str(it.get("caption") or "").strip()
+            if src.get("caption"):
+                rec_t["caption"] = cap_zh or src["caption"]
             if restore:
                 rec_t["en"] = tables.grid_to_markdown(grid)
                 rec_t["en_table"] = grid
