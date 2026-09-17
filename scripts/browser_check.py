@@ -77,6 +77,18 @@ COLLECTOR = """<script>
         d.querySelectorAll('.row.pbreak'), function (r) {
           return !r.querySelector('.en') || !r.querySelector('.zh');
         }).length,
+      // 渲染后**正文里**的 MathJax 报错文字（用户截图报的 `Missing argument for sqrt`）。
+      // ⚠️ 必须在"剥掉 script/style 之后"再搜：内联的 MathJax 库里就含这些字符串，
+      // 直接搜整份 HTML 会 100% 误报（我一开始就是这么误报的）。
+      mjErrors: (function () {
+        var b = d.body.cloneNode(true);
+        Array.prototype.forEach.call(
+          b.querySelectorAll('script, style, mjx-assistive-mml'),
+          function (n) { if (n.parentNode) n.parentNode.removeChild(n); });
+        var t = b.textContent || '';
+        return ['Missing argument', 'Undefined control sequence', 'Misplaced',
+                'Extra close brace'].filter(function (p) { return t.indexOf(p) >= 0; });
+      })(),
       failed: (d.querySelector('.load-error') ? d.querySelector('.load-error').textContent : '')
     };
     var box = d.createElement('div');
@@ -162,6 +174,11 @@ def run(html_path: Path, expect_rows: int | None, budget_ms: int) -> int:
     # 现在的要求是：**要有**，且每一条都必须左右两栏都占位。
     if data.get("pbreakOneSided"):
         print(f"  ❌ 有 {data['pbreakOneSided']} 条分页标记行只占一栏（分界线会断）")
+        return 1
+    if data.get("mjErrors"):
+        # 公式写坏了，MathJax 会把错误文字**当正文渲染出来**（用户截图报过
+        # `Missing argument for sqrt`）—— "看起来能用、其实已坏"，必须拦。
+        print(f"  ❌ 正文里有 MathJax 报错文字：{data['mjErrors']}")
         return 1
     print("  ✅ 真实浏览器里没有 JS 错误")
     return 0

@@ -912,13 +912,18 @@ def _balance_strings(obj) -> None:
     if isinstance(obj, list):
         for i, v in enumerate(obj):
             if isinstance(v, str):
-                obj[i] = mathify.balance_dollars(v)
+                obj[i] = mathify.escape_math_angles(
+                    mathify.repair_bare_commands(mathify.balance_dollars(v)))
             else:
                 _balance_strings(v)
     elif isinstance(obj, dict):
         for k, v in obj.items():
             if isinstance(v, str):
-                obj[k] = mathify.balance_dollars(v)
+                # 两步都做：平衡 $ 转义 + 修掉缺参数的 LaTeX 命令
+                # （`\sqrt` 少参数会让 MathJax 把 "Missing argument for sqrt"
+                #  当文字渲染进正文 —— 用户截图报的就是这个）
+                obj[k] = mathify.escape_math_angles(
+                    mathify.repair_bare_commands(mathify.balance_dollars(v)))
             else:
                 _balance_strings(v)
 

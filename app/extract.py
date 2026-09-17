@@ -113,7 +113,42 @@ def _renumber(paragraphs: list[dict]) -> list[dict]:
     """
     for i, p in enumerate(paragraphs, 1):
         p["id"] = f"p{i:04d}"
+    # 收尾统一修「缺参数的 LaTeX 命令」（`$\sqrt$ N` 这种）。
+    # ⚠️ 放在这里而不是每个构造点：文本来源有五六个（正文 / 表格单元格 /
+    # 伪代码行 / 图内文字 / 兜底路径），逐点加注定会漏（刚踩过：只包了一处，
+    # 重抽后仍有 3 处裸 `\sqrt` 漏网）。单点收尾最省心。
+    for p in paragraphs:
+        _repair_math_in_place(p)
     return paragraphs
+
+
+def _repair_math_in_place(para: dict) -> None:
+    """把段落里所有文本字段的"缺参数命令"补全（就地改）。"""
+    def fix(v):
+        if not isinstance(v, str):
+            return v
+        # 顺序：先补缺参数的命令，再把公式里的裸 < > 转义
+        return mathify.escape_math_angles(mathify.repair_bare_commands(v))
+
+    if isinstance(para.get("text"), str):
+        para["text"] = fix(para["text"])
+    for key in ("lines", "content", "labels"):
+        arr = para.get(key)
+        if isinstance(arr, list):
+            para[key] = [fix(x) for x in arr]
+    for holder in ("algorithm", "figure", "table"):
+        obj = para.get(holder)
+        if not isinstance(obj, dict):
+            continue
+        for key in ("lines", "content", "labels", "caption"):
+            if isinstance(obj.get(key), str):
+                obj[key] = fix(obj[key])
+            elif isinstance(obj.get(key), list):
+                obj[key] = [fix(x) for x in obj[key]]
+        for row in obj.get("rows") or []:
+            for cell in row:
+                if isinstance(cell, dict) and isinstance(cell.get("text"), str):
+                    cell["text"] = fix(cell["text"])
 
 
 def _caption_like(block: dict) -> bool:
@@ -534,8 +569,7 @@ def extract_pdf(path: str | Path, page_from: int | None = None,
                         idx += 1
                         paragraphs.append({
                             "id": f"p{idx:04d}", "page": pno, "kind": "text",
-                            "text": mathify.plain_text_escape(chunk),
-                            "math_ratio": 0.0,
+        "text": mathify.repair_bare_commands(mathify.plain_text_escape(chunk)),
                         })
                     continue
             except Exception:
@@ -784,7 +818,8 @@ def extract_with_pdfplumber(path: str | Path) -> dict:
                 idx += 1
                 paragraphs.append({
                     "id": f"p{idx:04d}", "page": pno, "kind": "text",
-                    "text": mathify.plain_text_escape(chunk), "math_ratio": 0.0,
+                    "text": mathify.repair_bare_commands(mathify.plain_text_escape(chunk)),
+                    "math_ratio": 0.0,
                 })
     paragraphs = _renumber(paragraphs)
     return {"title": Path(path).stem, "paragraphs": paragraphs,

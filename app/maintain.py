@@ -38,6 +38,61 @@ def _concat_translations(a: dict, b: dict) -> dict:
     return out
 
 
+
+# ---------------------------------------------------------------- 文本体检与修复
+
+def repair_math_text(doc_id: str) -> dict:
+    r"""把**已有数据**里的公式文本修干净（不花 API，幂等）。
+
+    修三类问题（都是"看起来能用、渲染出来已坏"）：
+    1. 缺参数的 LaTeX 命令：`$\sqrt$ N` → `$\sqrt{N}$`
+       （MathJax 会报 `Missing argument for sqrt` 并**把错误文字渲染进正文**）；
+    2. 公式里的裸 `<` / `>`：`$a<b$` → `$a&lt;b$`（浏览器会当标签）；
+    3. 落单的货币 `$`（`$4.06` → `\$4.06`，让 `$` 成对）。
+
+    为什么要这个入口：规则是逐步完善起来的，**老数据不会自动变好**；
+    重译一遍既花钱又慢，而这三类问题都是确定性的、可以就地修。
+    """
+    from . import mathify
+
+    def fix(v):
+        if not isinstance(v, str):
+            return v
+        return mathify.escape_math_angles(
+            mathify.repair_bare_commands(mathify.balance_dollars(v)))
+
+    def walk(obj) -> int:
+        n = 0
+        if isinstance(obj, list):
+            for i, v in enumerate(obj):
+                if isinstance(v, str):
+                    new = fix(v)
+                    if new != v:
+                        obj[i] = new
+                        n += 1
+                else:
+                    n += walk(v)
+        elif isinstance(obj, dict):
+            for k, v in obj.items():
+                if isinstance(v, str):
+                    new = fix(v)
+                    if new != v:
+                        obj[k] = new
+                        n += 1
+                else:
+                    n += walk(v)
+        return n
+
+    extracted = store.load_extracted(doc_id)
+    translations = store.load_translations(doc_id)
+    n_ex = walk(extracted.get("paragraphs", []))
+    n_tr = walk(translations)
+    if n_ex:
+        store.save_extracted(doc_id, extracted)
+    if n_tr:
+        store.save_translations(doc_id, translations)
+    return {"extracted": n_ex, "translated": n_tr, "total": n_ex + n_tr}
+
 def reextract_document(doc_id: str, page_from: int | None = None,
                        page_to: int | None = None, use_tables: bool = True) -> dict:
     """重新抽取并迁移译文，返回迁移统计。"""

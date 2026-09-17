@@ -160,6 +160,28 @@ def check_fidelity(doc_id: str) -> None:
           + (f"，可疑 {miss[:5]}" if miss else ""))
 
 
+def check_math_commands(doc_id: str) -> None:
+    """§6：数学命令不能缺参数。
+
+    用户截图报的就是这个：`$\sqrt$ N` → MathJax 把
+    "Missing argument for sqrt" **当文字渲染进正文**。
+    这是"看起来能用、实际已经坏了"的典型 —— 必须自检。
+    """
+    from app import mathify, store
+    ex = store.load_extracted(doc_id)
+    tr = store.load_translations(doc_id)
+    bad = []
+    for p in ex["paragraphs"]:
+        rec = tr.get(p["id"]) or {}
+        for side, txt in (("en", p.get("text") or ""),
+                          ("en重建", rec.get("en") or ""),
+                          ("zh", rec.get("zh") or "")):
+            for cmd in mathify.find_bare_commands(txt):
+                bad.append(f"{p['id']}/{side}:\\{cmd}")
+    check("数学命令不缺参数（\\sqrt 等必须带参数）", not bad,
+          f"{len(bad)} 处：{bad[:4]}" if bad else "无")
+
+
 def check_coverage(doc_id: str) -> None:
     """§10：status 不为 partial；100% 段落有 zh；zh 内不得残留整句英文。"""
     from app import store
@@ -255,15 +277,16 @@ def check_html(html: str, doc_id: str | None) -> None:
     n_dollar = stripped.count("$")
     check("排除 \\$ 后 $ 计数为偶数（公式成对）", n_dollar % 2 == 0, f"{n_dollar} 个")
 
-    # 公式区间的裸 < / >（写进 HTML 会被当标签）
+    # 公式区间的裸 < / >（会被浏览器当标签、MathJax 也拿不到）。
+    # ⚠️ 必须在**剥掉标签后的文本**上扫：在 HTML 上扫 `$...$` 会跨过标签边界，
+    # 把 `</p>` 里的 `<` 当成公式内容（第一版就是这么假报的）。
+    text_only = re.sub(r"<[^>]+>", "\n", html)
     bare = []
-    for m in re.finditer(r"\$([^$\n]{0,200})\$", html):
+    for m in re.finditer(r"\$([^$\n]{0,200})\$", text_only):
         seg = m.group(1)
-        if "<" in seg and "&lt;" not in seg:
+        if ("<" in seg and "&lt;" not in seg) or (">" in seg and "&gt;" not in seg):
             bare.append(seg[:40])
-        if ">" in seg and "&gt;" not in seg:
-            bare.append(seg[:40])
-    check("$…$ 内没有裸 < / >", not bare, f"{len(bare)} 处：{bare[:2]}")
+    check("$…$ 内没有裸 < / >", not bare, f"{len(bare)} 处：{bare[:2]}" if bare else "无")
 
     # 页面标记行必须左右两栏都在
     pbreak = re.findall(r'<div class="[^"]*\bpbreak\b[^"]*"[^>]*>(.*?)</div>\s*</div>', html, re.S)
@@ -317,6 +340,7 @@ def main() -> int:
         check_tables(args.doc)
         check_pages(args.doc)
         check_page_labels(args.doc)
+        check_math_commands(args.doc)
         check_fidelity(args.doc)
         check_terms(args.doc)
         check_coverage(args.doc)

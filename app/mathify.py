@@ -468,6 +468,85 @@ def balance_dollars(text: str) -> str:
     return t
 
 
+# ---------------------------------------------------------------- 裸命令修复
+
+# 这些命令**必须**带参数（花括号），缺了 MathJax 会直接报
+# `Missing argument for \\xxx` 并把错误文字渲染进正文。
+_NEEDS_ARG = (
+    "sqrt", "frac", "vec", "hat", "bar", "overline", "underline", "widehat",
+    "widetilde", "text", "textrm", "textbf", "mathrm", "mathbb", "mathcal",
+    "binom", "stackrel", "boxed", "operatorname", "pmod", "pod",
+)
+_BARE_CMD = re.compile(r"\\(" + "|".join(_NEEDS_ARG) + r")(?![a-zA-Z])(?![\[{])")
+
+
+def repair_bare_commands(text: str) -> str:
+    """把缺参数的命令补上参数，返回修好的文本。
+
+    两级处理：
+    * **收编区间外的被开方内容**：`$\\sqrt$ N` → `$\\sqrt{N}$`
+      （PDF 里根号的横线有时没被圈进数学区间，被开方的东西落在外面）；
+    * 实在找不到就补 `\\sqrt{\\ }` —— 合法、不报错，宁可显示空根号也不要报错。
+    """
+    t = text or ""
+    if "\\" not in t:
+        return t
+    # 第一级：`$\sqrt$` 后面紧跟的 token 收进花括号
+    def _pull(m):
+        # 正则吃掉的是**收尾的 `$`**（`\sqrt$ N`），开头那个 `$` 还在前面，
+        # 所以只把收尾的 `$` 还回去 → `$\sqrt{N}$`（多补一个会变成 `$$…`，踩过）。
+        return "\\%s{%s}$" % (m.group(1), m.group(2))
+
+    # 形如： \sqrt   $   [空白]  N  /  {N}  /  N_{i}
+    t = re.sub(r"\\(" + "|".join(_NEEDS_ARG) + r")\s*\$\s*"
+               r"([A-Za-z0-9]|\\[A-Za-z]+|\{[^{}]*\})", _pull, t)
+    # 第二级：`$\sqrt$` 后面是普通文本里的 token（数学区间已结束）
+    t = re.sub(r"\\(" + "|".join(_NEEDS_ARG) + r")\s*\$\s+"
+               r"([A-Za-z0-9](?:[_^]\{[^}]*\})?)", _pull, t)
+    # 第三级：还有裸的就补空参数（合法，不报错）
+    def _empty(m):
+        return "\\%s{\\ }" % m.group(1)
+
+    # frac 是**两参数**命令：只补到一个参数时仍会报 Missing argument → 补第二个
+    t = re.sub(r"\\frac\{([^{}]*)\}(?!\s*\{)",
+               lambda m: "\\frac{%s}{\\ }" % m.group(1), t)
+    for _ in range(8):                       # 反复扫，处理相邻的多个
+        new = _BARE_CMD.sub(_empty, t)
+        if new == t:
+            break
+        t = new
+    return t
+
+
+def find_bare_commands(text: str) -> list[str]:
+    """列出文本里缺参数的命令（供自检/校验用）。"""
+    return [m.group(1) for m in _BARE_CMD.finditer(text or "")]
+
+
+def escape_math_angles(text: str) -> str:
+    r"""把 `$...$` 里的裸 `<` / `>` 转成 `&lt;` / `&gt;`。
+
+    规格 §6 的硬规则：公式里的 `<` 会被浏览器当标签、MathJax 也就拿不到它
+    —— `$|B^{i,b}_j| < s^{i,b}_j$` 这种写法渲染出来是坏的。
+    模型偶尔会写裸 `<`（实测中文侧出现过一次），所以入库前统一过一遍。
+    `&lt;` 本身不含 `<`，因此不会重复转义。
+    """
+    def _fix(m):
+        # ⚠️ 用 TeX 宏 `\lt` / `\gt`，**不要用 HTML 实体 `&lt;`**：
+        # 实体只有在"经过 HTML 解析器解码"时才变成 `<`，而本项目的渲染器是把公式
+        # 当**字符串**交给 MathJax 的 —— `&lt;` 原样送进去，里面的 `&` 会被 MathJax
+        # 当成对齐制表符，公式渲染成 `Misplaced &` 错误框（实测踩过）。
+        # `\lt` / `\gt` 不依赖 HTML 解码，两种情况都对。
+        # 顺手把此前写进数据的 `&lt;` / `&gt;` 也换成宏（老数据修复）。
+        seg = m.group(0)
+        # ⚠️ 必须补 `{}` 与后面的字母断开：`a<b` 直接换成 `\lt` 会得到 `a\ltb`，
+        # 而 `\ltb` 是个**未定义宏**（踩过）。`\lt{}b` 的渲染结果与 `a<b` 一致。
+        seg = seg.replace("&lt;", "\\lt{}").replace("&gt;", "\\gt{}")
+        return seg.replace("<", "\\lt{}").replace(">", "\\gt{}")
+
+    return re.sub(r"\$[^$\n]{0,300}\$", _fix, text or "")
+
+
 def plain_text_escape(text: str, resolver=None) -> str:
     """非数学文本：转义会干扰 Markdown / MathJax 的字符。
 

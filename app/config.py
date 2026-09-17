@@ -80,6 +80,15 @@ DEFAULT_SYSTEM_PROMPT = r"""你是一位专业的学术论文翻译与排版专�
 - 保持学术书面语体，避免口语化、避免解释性扩写、避免添加原文没有的内容；
 - 原文里的引用标记 [12]、图表编号 Figure 3、章节编号等保持原样。
 
+【公式补全（重要）】
+PDF 抽取时根号这类符号常会**丢掉参数**，你会看到 `$\sqrt$ N` 这种写法
+—— `\sqrt` 后面没有花括号，表示被开方的内容没被圈进公式里。
+**请根据上下文补全它**：`$O(\log N \sqrt$ N)` 应写成 `$O(\log N \sqrt{N})$`
+（被开方的是紧随其后的那个 N）。
+`\frac`、`\vec`、`\hat`、`\overline`、`\text` 等**必须带参数**的命令同理。
+缺参数的公式在浏览器里会**直接报错并把错误文字渲染进正文**
+（例如把 "Missing argument for sqrt" 当成正文显示），必须避免。
+
 【输出】只输出严格合法的 JSON，不要 Markdown 代码块、不要任何解释文字。"""
 
 DEFAULT_ASK_PROMPT = """你是一位既懂数学推导又懂密码学/计算机科学的助教，正在帮助读者理解一篇英文论文。
@@ -117,6 +126,10 @@ DEFAULT_SETTINGS: dict[str, Any] = {
 _LEGACY_PROMPT_SHA1 = frozenset({
     "8c63d3c8dfd9fcae8d2f1c1c3fae18c7956061f3",
     "c2f24ecdf345b1e9e2de23006dab41785b63df81",
+    # 2026-09-17：加入【公式补全】段（修 `$\sqrt$ N` 这类缺参数命令）之前的版本。
+    # ⚠️ 维护约定：每次改 DEFAULT_SYSTEM_PROMPT，把**上一版**的 sha1 加到这里，
+    # 否则老用户的 settings.json 里存着旧提示词，永远收不到新规则。
+    "87a3a2806783bd860b95c00dae1d89ea76b90958",
 })
 
 
