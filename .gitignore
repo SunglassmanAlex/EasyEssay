@@ -67,3 +67,8 @@ translate.log
 
 .ocr*.log
 .*.html
+
+dist-next/
+dist-*/
+.build/
+*.toc
