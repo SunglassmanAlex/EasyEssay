@@ -257,9 +257,30 @@
     var box = el('div', 'tblbox');
     var table = document.createElement('table');
     // 列数写进属性：CSS 据此给"≥8 列的表"用小一号字（半栏里塞 10+ 列会溢出）
-    table.setAttribute('data-cols', String((grid && grid.columns) || 0));
+    var ncols = (grid && grid.columns) || 0;
+    table.setAttribute('data-cols', String(ncols));
+    table.className = 't';                      // 与参照稿同名，样式可对齐
+    if (ncols >= 8) table.className += ' sm';   // 宽表缩小一号（参照稿的 table.t.sm）
     var thead = document.createElement('thead');
     var tbody = document.createElement('tbody');
+
+    // —— 先判列的性子，再渲染（列级判据比逐格猜可靠）——
+    // textCol[i]：第 i 列是不是"说明列"（该左对齐 + 允许换行）
+    // symCol[i] ：第 i 列是不是"符号列"（该按数学渲染，参照稿里是 `$M$`）
+    var nCols = (grid && grid.columns) || 0;
+    var textCol = [], symCol = [];
+    for (var ci = 0; ci < nCols; ci++) {
+      var vals = [];
+      for (var ri = 0; ri < rows.length; ri++) {
+        var cl = rows[ri] && rows[ri][ci];
+        var cv = (typeof cl === 'object' ? (cl && cl.text) : cl);
+        if (cv !== null && cv !== undefined && String(cv).trim()) vals.push(String(cv).trim());
+      }
+      var longish = vals.filter(function (v) { return v.length > 12 && /\s/.test(v); }).length;
+      var symbols = vals.filter(function (v) { return /^[A-Za-z][A-Za-z0-9]{0,4}$/.test(v); }).length;
+      textCol[ci] = vals.length > 0 && longish / vals.length >= 0.5;
+      symCol[ci] = !textCol[ci] && vals.length > 0 && symbols / vals.length >= 0.6;
+    }
 
     function makeRow(cols, isHead, cells) {
       var tr = document.createElement('tr');
@@ -270,8 +291,13 @@
         var span = (typeof c === 'object' && c.span) ? c.span : 1;
         if (span > 1) cellEl.colSpan = span;
         var txt = (typeof c === 'object' ? (c.text || '') : String(c));
-        // 单元格里可能有 $...$（含数学符号），仍走 markdown 渲染
-        md.richInto(cellEl, txt);
+        // 说明列左对齐 + 允许换行（参照稿的 td.l）；其余列靠 CSS 的 nowrap 保持一行
+        if (!isHead && textCol[i]) cellEl.className = 'l';
+        // 符号列按数学渲染（`M` → `$M$`，斜体），与参照稿一致；已是 $…$ 的不动
+        if (symCol[i] && /^[A-Za-z][A-Za-z0-9]{0,4}$/.test(txt)) txt = '$' + txt + '$';
+        // ⚠️ 单元格必须用**行内**渲染：richInto 是块级渲染，会给每格套一个 <p>，
+        // `<p>` 自带上下边距 → 表格虚胖、行距不一致（这是观感差的主因）。
+        cellEl.innerHTML = md.inlineMd(txt);
         tr.appendChild(cellEl);
       }
       return tr;
@@ -426,8 +452,12 @@
       if (fig && fig.caption && fillFigureCell(cell, fig, para.figureNote)) return;
     }
     if (kind === 'table' && para.table) {
-      tableCaption(cell, para.caption);
-      if (fillTableCell(cell, para.table)) return;
+      // ⚠️ 顺序：表格在上、表题在下（参照稿就是 `<div class="tblbox">…</div>`
+      // 紧跟 `<div class="tcap">Table 1: …</div>`）。
+      if (fillTableCell(cell, para.table)) {
+        tableCaption(cell, para.caption);
+        return;
+      }
     }
     if (kind === 'algorithm') {
       var lines = (para.algorithm && para.algorithm.lines) || String(text).split('\n');

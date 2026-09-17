@@ -297,6 +297,35 @@ def check_html(html: str, doc_id: str | None) -> None:
         # 没有分页标记行：不判失败，但如实说明（本项目的导出只用段落开头的页栏）
         print("  · 本导出没有分页标记行（只有段落页栏 p.N）")
 
+    # —— 表格结构（按参照成品稿对齐，用户点名过这一块）——
+    tables = re.findall(r"<table.*?</table>", html, re.S)
+    if tables:
+        # ① 单元格里不能有块级元素：`<p>` 自带上下边距，会把表格撑得虚胖、
+        #    行距参差 —— 参照稿的单元格是纯行内内容（用户投诉的观感问题之一）
+        blocked = [t[:40] for t in tables if re.search(r"<t[hd][^>]*>\s*<(p|div)", t)]
+        check("表格单元格里没有块级元素（<p>/<div>）", not blocked,
+              f"{len(blocked)} 个表有" if blocked else f"{len(tables)} 个表都干净")
+        # ② 宽表（≥8 列）必须缩小一号，否则半栏里塞 10+ 列必然溢出
+        wide = re.findall(r'<table[^>]*data-cols="(\d+)"[^>]*>', html)
+        bad_wide = [int(c) for c in wide if int(c) >= 8
+                    and 'class="t sm"' not in html[max(0, html.find('data-cols="%s"' % c) - 60):
+                                                    html.find('data-cols="%s"' % c) + 60]]
+        check("宽表（≥8 列）用了小一号（table.t.sm）", not bad_wide,
+              f"有 {len(bad_wide)} 个宽表没缩小" if bad_wide else
+              f"宽表 {sum(1 for c in wide if int(c) >= 8)} 个，都已缩小")
+        # ③ 说明列要左对齐（class="l"）——参照稿里长说明列都是 td.l
+        check("存在左对齐的说明列（td.l）", 'class="l"' in html or "<td>l</td>" in html,
+              f"{html.count('class=' + chr(34) + 'l' + chr(34))} 个")
+
+    # 表题必须在**表格下方**（参照稿的顺序：.tblbox 紧跟 .tcap）
+    seq = re.findall(r'<div class="(tblbox|tcap)"', html)
+    if len(seq) >= 2:
+        first_bad = next((i for i, v in enumerate(seq)
+                          if v != ('tblbox' if i % 2 == 0 else 'tcap')), None)
+        check("表在上、表题在下（与参照稿同序）", first_bad is None,
+              f"第 {first_bad + 1} 个元素是 {seq[first_bad]}（顺序不对）"
+              if first_bad is not None else f"{len(seq)} 个元素顺序正确")
+
     # 术语标记不能出现在表格里
     tbl_html = re.findall(r"<table\b.*?</table>", html, re.S)
     in_table = sum(t.count('class="term"') for t in tbl_html)
