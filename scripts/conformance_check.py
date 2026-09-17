@@ -182,6 +182,40 @@ def check_math_commands(doc_id: str) -> None:
           f"{len(bad)} 处：{bad[:4]}" if bad else "无")
 
 
+def check_hyphenation(doc_id: str) -> None:
+    """§9-2：行末连字符必须分清"断词"与"真连词"。
+
+    判据（确定性、可复现）：拿 PDF 里**行中间出现过**的连字符词当词表 ——
+    它们是"确证的真连词"。若某个这样的词在抽取文本里**丢了连字符**
+    （`semantic-search` → `semanticsearch`），就是判错了。
+    实测修复前有 114 处，双向都为 0 才算过。
+    """
+    from app import extract, store
+    src = store.source_path(doc_id)
+    if not src:
+        print("  · 找不到源文件，跳过连字符检查")
+        return
+    try:
+        import pymupdf
+        doc = pymupdf.open(src)
+        vocab = extract.collect_hyphen_vocab(doc, 1, doc.page_count)
+        doc.close()
+    except Exception as e:  # noqa: BLE001
+        print(f"  · 读取原文失败（{str(e)[:40]}），跳过连字符检查")
+        return
+
+    ex = store.load_extracted(doc_id)
+    text = " ".join((p.get("text") or "") + " " + ((ex.get("meta") or {}).get("x") or "")
+                    for p in ex["paragraphs"])
+    squeezed = re.sub(r"[^a-z0-9]", "", text.lower())
+    lost = [w for w in sorted(vocab)
+            if len(w) >= 8 and w not in text.lower()
+            and re.sub(r"[^a-z0-9]", "", w.lower()) in squeezed]
+    check("行末连字符处理正确（真连词没被拼掉）", not lost,
+          f"{len(lost)} 个词丢了连字符：{lost[:4]}" if lost
+          else f"对照原文 {len(vocab)} 个连字符词，全部一致")
+
+
 def check_coverage(doc_id: str) -> None:
     """§10：status 不为 partial；100% 段落有 zh；zh 内不得残留整句英文。"""
     from app import store
@@ -370,6 +404,7 @@ def main() -> int:
         check_pages(args.doc)
         check_page_labels(args.doc)
         check_math_commands(args.doc)
+        check_hyphenation(args.doc)
         check_fidelity(args.doc)
         check_terms(args.doc)
         check_coverage(args.doc)

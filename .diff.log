@@ -1,0 +1,85 @@
+参照稿 366 行 | 我的 401 行
+（去掉分页标记行后 382 行 vs 参照稿 366 行）
+逐行逐字相同: 4/366 = 1%
+
+=== 差异样例（前 20 处）===
+
+[1] 参类名='' 我='brow head' 相似度=62%
+  参: Jinhao Zhu (UC Berkeley), Liana Patel (Stanford University), Matei Zaharia (UC Berkeley), Raluca Ada Popa (UC Berkeley)
+  我: Jinhao Zhu UC Berkeley Liana Patel Stanford University
+
+[3] 参类名='' 我='brow' 相似度=100%
+  参: We present Compass, a semantic search system for encrypted data that achieves high accuracy, matching state-of-the-art plaintext s
+  我: We present Compass, a semantic search system for encrypted data that achieves high accuracy, matching state-ofthe-art plaintext se
+
+[5] 参类名='' 我='brow' 相似度=99%
+  参: An increasing number of user data systems, including WhatsApp [30], iCloud Backups [10], Telegram [121], Signal [110], and PreVeil
+  我: An increasing number of user data systems, including WhatsApp [30], iCloud Backups [10], Telegram [121], Signal [110], and PreVeil
+
+[6] 参类名='' 我='brow' 相似度=94%
+  参: Security: The goal is to protect data, queries, results, and access patterns, against a fully compromised server. i) Leaky practic
+  我: Security: The goal is to protect data, queries, results, and access patterns, against a fully compromised server. i) Leaky practic
+
+[7] 参类名='tiny' 我='brow' 相似度=25%
+  参: Figure 1 (search-result box)
+  我: Matei Zaharia Raluca Ada Popa
+
+[8] 参类名='' 我='brow' 相似度=21%
+  参: Meaning of social security numbers?
+  我: difficult to deploy such different trust domains [26,73], and attackers can still compromise both servers.
+
+[9] 参类名='' 我='brow' 相似度=100%
+  参: Accuracy: Most of the works mentioned above have lower accuracy compared to state-of-the-art plaintext search systems. This is bec
+  我: Accuracy: Most of the works mentioned above have lower accuracy compared to state-of-the-art plaintext search systems. This is bec
+
+[10] 参类名='' 我='brow' 相似度=76%
+  参: In this work, through our system Compass, we show that one can achieve the best of both worlds — namely, an efficient and accurate
+  我: In this work, through our system Compass, we show that one can achieve the best of both worlds — namely, an efficient and accurate
+
+[11] 参类名='' 我='brow' 相似度=3%
+  参: Compass is designed for scenarios where a user wishes to privately search over their own confidential data, stored in encrypted fo
+  我: The few prior proposals on secure embedding search are either inefficient or have weak security guarantees. For example, HERS [36]
+
+[12] 参类名='' 我='brow' 相似度=6%
+  参: The few prior proposals on secure embedding search are either inefficient or have weak security guarantees. For example, HERS [36]
+  我: To realize our goal of high accuracy, Compass aims to execute a powerful state-of-the-art semantic search index over encrypted emb
+
+[13] 参类名='' 我='brow' 相似度=3%
+  参: To realize our goal of high accuracy, Compass aims to execute a powerful state-of-the-art semantic search index over encrypted emb
+  我: Such complex graph traversal in the embedding space would be inefficient to perform with fully homomorphic encryption (FHE) [42] o
+
+[14] 参类名='' 我='brow' 相似度=4%
+  参: Such complex graph traversal in the embedding space would be inefficient to perform with fully homomorphic encryption (FHE) [42] o
+  我: While the idea of combining a graph-based index with ORAM is alluring, the main challenge lies in efficiency. HNSW, like other gra
+
+[15] 参类名='' 我='brow' 相似度=3%
+  参: While the idea of combining a graph-based index with ORAM is alluring, the main challenge lies in efficiency. HNSW, like other gra
+  我: Query Embedding
+
+[17] 参类名='' 我='brow' 相似度=100%
+  参: Evaluation summary: We implemented and evaluated Compass on 4 popular datasets of different sizes and dimensions. Our results show
+  我: Evaluation summary: We implemented and evaluated Compass on 4 popular datasets of different sizes and dimensions. Our results show
+
+[18] 参类名='pbreak' 我='brow' 相似度=10%
+  参: — page 2 ends · page 3 begins —
+  我: Query Node
+
+[19] 参类名='tiny' 我='brow head' 相似度=19%
+  参: Figure 3 (diagram: HNSW Graph)
+  我: 2 Background
+
+[20] 参类名='' 我='brow sub' 相似度=28%
+  参: Figure 3: HNSW Graph · legend: Visited Node · Best Match · Search Path · Edge · Query Node · Entry Node
+  我: 2.1 Graph-based ANN Search
+
+[21] 参类名='head' 我='brow' 相似度=0%
+  参: 2 Background
+  我: Similarity search is a core component of large-scale retrieval tasks. Commonly, entities, such as images, user profiles, audio, te
+
+[22] 参类名='sub' 我='brow' 相似度=1%
+  参: 2.1 Graph-based ANN Search
+  我: Since exact NN search is intractable on large, high-dimensional datasets [21, 106] and many applications can tolerate some accurac
+
+[23] 参类名='' 我='brow' 相似度=1%
+  参: Similarity search is a core component of large-scale retrieval tasks. Commonly, entities, such as images, user profiles, audio, te
+  我: HNSW [79] is a widely-used, top-performing graph-based index [12, 112]. It builds a hierarchical, multi-layer graph that has bound

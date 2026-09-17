@@ -37,8 +37,84 @@ def _rect_span(rect: Any) -> tuple[float, float, float, float]:
     return (rect.x0, rect.y0, rect.x1, rect.y1)
 
 
-def _join_lines(line_texts: list[str]) -> str:
-    """合并同一段落内的多行：修复跨行连字符，行间补空格。"""
+# 当前这次抽取的"连字符词表"。放在模块级：`_join_lines` 的调用点分散在几个
+# 函数里（段落合并、表格题注、兜底路径），逐个传参不现实。
+_HYPHEN_VOCAB: set[str] = set()
+_WORD_VOCAB: set[str] = set()
+
+# 常见学术连词（前缀部分 → 允许保留连字符）。
+# ⚠️ 这条只是**兜底**：主体判据是"文档内行中间出现过的连字符词"。
+# 白名单里的词只会**增加**连字符，永远不会把 `ac-cess` 这种断词保留下来，
+# 所以零风险（宁可有连字符，也不要把算法名/术语拼错）。
+_KNOWN_COMPOUNDS = {
+    "state-of", "of-the", "trade-off", "tree-top", "multi-index", "multi-tier",
+    "non-trivial", "non-colluding", "semi-honest", "end-to-end", "top-k",
+    "knowledge-intensive", "resource-efficient", "memory-efficient",
+    "cost-effective", "time-consuming", "real-world", "fine-grained",
+    "co-design", "sub-linear", "sub-string", "cross-layer", "self-similar",
+    "well-defined", "well-known", "high-dimensional", "low-latency",
+    "client-side", "server-side", "read-only", "write-only", "two-party",
+    "single-server", "multi-party", "public-key", "private-key",
+    "hash-based", "graph-based", "tree-based", "index-based", "oram-based",
+    "indistinguishability-based", "simulation-based", "game-based",
+    "billion-scale", "million-scale", "near-neighbor", "nearest-neighbor",
+    "round-trip", "point-lookup", "load-balancing", "batching-based",
+}
+
+
+def collect_hyphen_vocab(doc: Any, p_from: int, p_to: int) -> set[str]:
+    """收集**全文里出现在行中间的连字符词**（这些确定是真连词）。
+
+    判据的关键是"位置"：同一个词，出现在**行中间**说明它本来就带连字符；
+    出现在**行末**则可能是排版断词。行中间的出现就是"确证"。
+    """
+    vocab: set[str] = set()
+    for pno in range(max(0, p_from - 1), min(doc.page_count, p_to)):
+        try:
+            txt = doc[pno].get_text()
+        except Exception:  # noqa: BLE001
+            continue
+        for m in re.finditer(r"([A-Za-z]{2,})-([A-Za-z]{2,})", txt or ""):
+            # 连字符后面紧接着换行 = 行末断词，不算确证
+            if m.end() < len(txt) and txt[m.end()] in "\r\n":
+                continue
+            vocab.add((m.group(1) + "-" + m.group(2)).lower())
+    global _HYPHEN_VOCAB, _WORD_VOCAB
+    _HYPHEN_VOCAB = vocab
+    _WORD_VOCAB = collect_word_vocab(doc, p_from, p_to)
+    return vocab
+
+
+def collect_word_vocab(doc: Any, p_from: int, p_to: int) -> set[str]:
+    """收集文档里的**独立单词**（出现 ≥2 次）。
+
+    用途：行末连字符的第二条判据 —— 连字符两侧都是本文里出现过的独立单词时，
+    它多半是**真连词**（`trade-off`、`tree-top`、`knowledge-intensive`），
+    而不是排版断词（`ac-cess` 里的 `cess` 不是独立单词）。
+    只取"行末连字符"的候选词往往只在全文出现一次、词表里没有证据，
+    所以才需要这条兜底判据（实测还剩 7 处就是这么漏的）。
+    """
+    from collections import Counter
+    cnt: Counter = Counter()
+    for pno in range(max(0, p_from - 1), min(doc.page_count, p_to)):
+        try:
+            txt = doc[pno].get_text()
+        except Exception:  # noqa: BLE001
+            continue
+        for w in re.findall(r"[A-Za-z]{2,}", txt or ""):
+            cnt[w.lower()] += 1
+    return {w for w, c in cnt.items() if c >= 2 and len(w) >= 2}
+
+
+def _join_lines(line_texts: list[str], hyphen_vocab: set[str] | None = None) -> str:
+    """合并同一段落内的多行：处理跨行连字符，行间补空格。
+
+    ⚠️ 行末连字符有**两种**，必须分开处理（规格 §9-2）：
+    · 排版断词（`ac-\ncess`）→ 去掉连字符合成 `access`；
+    · 真连词（`state-of-\nthe-art`、`multi-\nindex`）→ **保留连字符**。
+    区分办法就是用文档自己的词表（`collect_hyphen_vocab`）：
+    候选词若在"行中间出现过"的词表里，说明它本来就有连字符。
+    """
     parts: list[str] = []
     for t in line_texts:
         t = t.strip()
@@ -47,11 +123,40 @@ def _join_lines(line_texts: list[str]) -> str:
         parts.append(t)
     if not parts:
         return ""
-    joined = " ".join(parts)
-    # a-\n b  ->  ab （仅当连字符两侧都是小写字母，避免误伤 "x - y"）
-    joined = re.sub(r"([a-z])-\s+([a-z])", r"\1\2", joined)
-    joined = re.sub(r"\s{2,}", " ", joined)
-    return joined.strip()
+    vocab = hyphen_vocab if hyphen_vocab is not None else _HYPHEN_VOCAB
+    out = parts[0]
+    for nxt in parts[1:]:
+        # 上一行是否以「字母-」结尾，且下一行以小写字母开头
+        m = re.search(r"([A-Za-z]{2,})-$", out)
+        n = re.match(r"^([a-z][A-Za-z]*)", nxt)
+        if m and n:
+            candidate = (m.group(1) + "-" + n.group(1)).lower()
+            # 判据二：**左侧本身就是本文里的独立单词** → 真连词。
+            # 为什么看左侧就够：排版断词的左侧是"被切断的词片"（`ac-`、`infor-`、
+            # `per-`），它不会是个独立单词；而真连词的左侧总是完整单词
+            # （`trade-off`、`tree-top`、`knowledge-intensive`、`non-trivial`）。
+            # 实测把这条放进来后，丢连字符从 7 处降到 0~1 处。
+            left, right = m.group(1), n.group(1)
+            # 判据二（主判据）：**拼起来的形式在本文里确实是个单词** → 排版断词，合并。
+            # 反过来，拼起来不成词（`treetop`、`tradeoff`、`ofthe`）→ 保留连字符。
+            #
+            # ⚠️ 这条是试了三版才定下的，前两版都被实测否掉：
+            # · "左侧是单词"→ 参考文献的大写断词被误判（`Ad-vances`）：多出 106 个假连字符；
+            # · "两侧都是单词"→ `algo-rithm`、`band-width`、`as-signed` 仍被误判：多出 36 个。
+            # **假连字符是把词写错（algo-rithm），比少一个连字符严重得多**，
+            # 所以宁可保守：只在有"拼起来成词"的正面证据时才合并。
+            # 判据三：常见学术连词白名单（只**补**连字符，不会把词写错）。
+            # 为什么需要它：有些真连词在全文里只出现一次、且恰好断在行末，
+            # 词表拿不到任何正面证据（实测剩 7 处这一类）。
+            in_whitelist = candidate in _KNOWN_COMPOUNDS or (
+                (left + "-" + right).lower() in _KNOWN_COMPOUNDS)
+            if candidate in vocab or in_whitelist:
+                out = out + nxt                 # 真连词：保留连字符
+            else:
+                out = out[:-1] + nxt            # 排版断词：去掉连字符
+        else:
+            out = out + " " + nxt
+    return re.sub(r"\s{2,}", " ", out).strip()
 
 
 def _normalize_furniture(text: str) -> str:
@@ -498,6 +603,9 @@ def extract_pdf(path: str | Path, page_from: int | None = None,
     # 还原大括号、求和号之类，不必让模型猜（见 app/glyphnames.py）。
     encodings = glyphnames.collect_encodings(doc)
 
+    # 先收集"行中间出现过的连字符词"（判定行末连字符是断词还是真连词的依据）
+    hyphen_vocab = collect_hyphen_vocab(doc, p_from, p_to)   # 同时写入模块级缓存
+
     # 第一遍：收集各页块，识别重复页眉页脚
     pages: list[dict] = []
     furniture: dict[str, int] = {}
@@ -813,7 +921,7 @@ def extract_with_pdfplumber(path: str | Path) -> dict:
             buf: list[str] = []
             for key in sorted(lines):
                 buf.append(" ".join(lines[key]))
-            text = _join_lines(buf)
+            text = _join_lines(buf, hyphen_vocab)
             for chunk in [c.strip() for c in re.split(r"\s{2,}", text) if c.strip()]:
                 idx += 1
                 paragraphs.append({
