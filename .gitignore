@@ -72,3 +72,6 @@ dist-next/
 dist-*/
 .build/
 *.toc
+
+.r*.log
+.al*.log
