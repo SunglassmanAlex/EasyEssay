@@ -64,3 +64,6 @@ translate.log
 
 .ocr*.log
 .*.html
+
+.ocr*.log
+.*.html
