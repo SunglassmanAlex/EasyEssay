@@ -496,6 +496,58 @@
     return true;
   }
 
+  /** 图/表/算法的"类型标记"：标准答案在它们前面放一条 `.row.tiny`
+   * （`Figure 3 (diagram: HNSW Graph)` / `表 1（完整复现）`）。
+   * 标签用确定性判据推，不靠模型：图内无文字→示意图；刻度类标签多→曲线图；
+   * 其余（有实际文字内容）→完整复现。
+   */
+  function kind0(p) { return (p && p.kind) || 'text'; }
+
+  function blockMark(p, tr, lang) {
+    var kind = p.kind || 'text';
+    var n = 0;
+    var m = String((p.text || '')).match(/(?:figure|fig\.?|table|algorithm|算法|图|表)\s*(\d+)/i);
+    if (m) n = m[1];
+    if (kind === 'figure') {
+      if (!n) {
+        var cm = String((tr.figure || {}).caption || (p.figure || {}).caption || '')
+          .match(/(?:figure|图)\s*(\d+)/i);
+        n = cm ? cm[1] : '';
+      }
+      var fig = p.figure || {};
+      var content = (fig.content || []).length;
+      var labels = (fig.labels || []).length;
+      var numeric = (fig.labels || []).filter(function (x) { return /^[\d.\s-]+$/.test(String(x)); }).length;
+      // 类型判据（对齐标准答案的 `diagram:` / `plot:` / `(reproduced)`）：
+      // · 图内没有成句文字（只有图例/短标签）→ 示意图 diagram
+      // · 刻度类标签多 → 曲线图 plot
+      // · 有成句文字（检索结果框、安全博弈规则那种）→ 完整复现 reproduced
+      var cls = fig.content || [];
+      var sentencelike = cls.filter(function (x) {
+        var t = String(x).trim();
+        return t.length > 30 || /[.。;；]$/.test(t);
+      }).length;
+      var type = (content === 0 || sentencelike === 0)
+        ? 'diagram'
+        : (labels >= 6 && numeric >= 4 ? 'plot' : 'reproduced');
+      if (lang === 'zh') {
+        var zhType = type === 'diagram' ? '示意图' : (type === 'plot' ? '曲线图' : '完整复现');
+        return '图 ' + n + '（' + zhType + '）';
+      }
+      var enType = type === 'diagram' ? 'diagram' : (type === 'plot' ? 'plot' : 'reproduced');
+      return 'Figure ' + n + ' (' + enType + ')';
+    }
+    if (kind === 'table' || kind === 'algorithm') {
+      if (kind === 'table') {
+        var tm = String((tr.caption || p.caption || '')).match(/(?:table|表)\s*(\d+)/i);
+        if (tm) n = tm[1];
+      }
+      if (lang === 'zh') return (kind === 'table' ? '表 ' : '算法 ') + n + '（完整复现）';
+      return (kind === 'table' ? 'Table ' : 'Algorithm ') + n + ' (reproduced)';
+    }
+    return '';
+  }
+
   function fillCell(cell, para, kind, lang) {
     var text = para.text || '';
     if (kind === 'figure') {
@@ -620,6 +672,26 @@
     paragraphs.forEach(function (p) {
       var from = p.page || 1;
       var to = p.page_end || from;
+
+      // 图/表/算法前插一条 `.row.tiny` 紧凑标记行（标准答案的做法）：
+      // 让读者一眼知道"这里是图 3，是个示意图"，而不是直接撞上一个框。
+      if (kind0(p) === 'figure' || kind0(p) === 'table' || kind0(p) === 'algorithm') {
+        var mk;                     // 需要译文才能定"完整复现"等标签，先取记录
+        var trRec = translations[p.id] || {};
+        var enMark = blockMark(p, trRec, 'en');
+        var zhMark = blockMark(p, trRec, 'zh');
+        if (enMark) {
+          var trow = el('div', 'row tiny');
+          trow.dataset.pg = 'p.' + from;
+          var te = el('div', 'en');
+          te.textContent = enMark;
+          var tz = el('div', 'zh');
+          tz.textContent = zhMark;
+          trow.appendChild(te);
+          trow.appendChild(tz);
+          wrap.appendChild(trow);
+        }
+      }
 
       // 页与页之间插一条**左右两栏都有**的分页标记行。
       // 参照稿 `.row.pbreak` 就是这么写的 —— 关键点是**两栏都占位**：
