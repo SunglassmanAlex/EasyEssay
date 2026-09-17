@@ -227,6 +227,33 @@ def _renumber(paragraphs: list[dict]) -> list[dict]:
     return paragraphs
 
 
+
+def _split_bullet_lists(paragraphs: list[dict]) -> list[dict]:
+    """把"引导句 + • 条目"拆成两块（引导句一块、条目一块）。
+
+    标准答案就是这么排的：`Compass's APIs are as follows:` 单独一行，
+    条目另起一行并用 `<ul><li>` 渲染。挤在一段里会让读者以为是一句话。
+    """
+    out: list[dict] = []
+    for p in paragraphs:
+        text = p.get("text") or ""
+        if p.get("kind") != "text" or text.count("•") < 2:
+            out.append(p)
+            continue
+        head, _, items = text.partition("•")
+        head = head.strip()
+        items = ("• " + items).strip()
+        if not head or not items:
+            out.append(p)
+            continue
+        a = dict(p)
+        a["text"] = head
+        b = dict(p)
+        b["text"] = items
+        out.append(a)
+        out.append(b)
+    return out
+
 def _repair_math_in_place(para: dict) -> None:
     """把段落里所有文本字段的"缺参数命令"补全（就地改）。"""
     def fix(v):
@@ -1020,8 +1047,9 @@ def extract_pdf(path: str | Path, page_from: int | None = None,
     title = re.sub(r"\$[^$]*\$", "", title).strip() or Path(path).stem
 
     doc.close()
-    # 合并字形碎片会吃掉一些 id → 这里统一重编号，保证不跳号
-    paragraphs = _renumber(paragraphs)
+    # 拆"引导句 + • 条目"（标准答案把 intro 与条目分成两行；全文不保留 `•`），
+    # 再重编号 —— 合并字形碎片会吃掉一些 id，必须重编号保证不跳号
+    paragraphs = _renumber(_split_bullet_lists(paragraphs))
     glyph_issues = sum(p.get("glyph_issues", 0) for p in paragraphs)
     return {
         "title": title,
@@ -1073,7 +1101,8 @@ def extract_with_pdfplumber(path: str | Path) -> dict:
                     "text": mathify.repair_bare_commands(mathify.plain_text_escape(chunk)),
                     "math_ratio": 0.0,
                 })
-    paragraphs = _renumber(paragraphs)
+    # 拆"引导句 + • 条目"（标准答案把 intro 与条目分成两行），再重编号
+    paragraphs = _renumber(_split_bullet_lists(paragraphs))
     return {"title": Path(path).stem, "paragraphs": paragraphs,
             "page_count": len(set(p["page"] for p in paragraphs)) or 1,
             "body_size": 10.0, "ocr_pages": [], "fallback": True}

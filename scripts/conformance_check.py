@@ -360,6 +360,13 @@ def check_html(html: str, doc_id: str | None) -> None:
               f"第 {first_bad + 1} 个元素是 {seq[first_bad]}（顺序不对）"
               if first_bad is not None else f"{len(seq)} 个元素顺序正确")
 
+    # 项目符号列表：标准答案里**全文没有 `•`**，条目一律进 <ul><li>
+    body_no_script = re.sub(r"<script\b.*?</script>", "", html, flags=re.S | re.I)
+    bullets = body_no_script.count("•")
+    uls = body_no_script.count("<ul")
+    check("项目符号列表渲染成 <ul><li>（不留 •）", bullets == 0 and uls > 0,
+          f"残留 • {bullets} 处 / <ul> {uls} 个" if bullets else f"<ul> {uls} 个，无残留")
+
     # 术语标记不能出现在表格里
     tbl_html = re.findall(r"<table\b.*?</table>", html, re.S)
     in_table = sum(t.count('class="term"') for t in tbl_html)

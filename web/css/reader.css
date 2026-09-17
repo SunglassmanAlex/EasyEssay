@@ -533,6 +533,11 @@ table.t.sm th { line-height: 1.3; }
 table.t th p, table.t td p { margin: 0; }
 .tcap { margin: 2px 0 6px; font-size: var(--fs-block-sm); color: var(--muted); }
 
+/* 项目符号列表（规格：条目进 <ul><li>，不把 `•` 摆出来） */
+.md-ul, .en ul, .zh ul, .bcell ul { margin: 4px 0 4px 18px; padding: 0; }
+.md-ul li, .en ul li, .zh ul li, .bcell ul li { margin: 3px 0; line-height: var(--lh); }
+.md-ul li b, .bcell ul li b { color: var(--accent); font-weight: 700; }
+
 /* 算法 / 协议框 */
 .proto {
   border: 1px solid var(--boxbd);

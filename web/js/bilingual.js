@@ -463,6 +463,39 @@
     cell.appendChild(d);
   }
 
+  /** 项目符号列表：`• a • b` → `<ul><li>a</li><li>b</li></ul>`（标准答案的排法）。
+   *
+   * 标准答案里**全文没有 `•`** —— 条目一律进 `<ul><li>`，且条目标签加粗
+   * （`<b>INIT(</b>$D$<b>):</b> …`），读起来才像 API 手册而不是一坨文字。
+   */
+  function fillListCell(cell, text) {
+    var parts = String(text || '').split(/\s*•\s*/);
+    if (parts.length < 3) return false;      // 至少两个条目才算列表
+    var intro = parts.shift().trim();
+    var ul = document.createElement('ul');
+    ul.className = 'md-ul';
+    parts.forEach(function (item) {
+      item = item.trim();
+      if (!item) return;
+      var li = document.createElement('li');
+      // 条目标签（第一个冒号/括号之前）加粗，与标准答案一致
+      var m = item.match(/^([^:：]{1,42}[:：])\s*(.*)$/);
+      if (m && m[1].length <= 42) {
+        li.innerHTML = '<b>' + md.esc(m[1]) + '</b> ' + md.inlineMd(m[2]);
+      } else {
+        li.innerHTML = md.inlineMd(item);
+      }
+      ul.appendChild(li);
+    });
+    if (intro) {
+      var ip = document.createElement('p');
+      ip.innerHTML = md.inlineMd(intro);
+      cell.appendChild(ip);
+    }
+    cell.appendChild(ul);
+    return true;
+  }
+
   function fillCell(cell, para, kind, lang) {
     var text = para.text || '';
     if (kind === 'figure') {
@@ -486,6 +519,8 @@
       if (fillAlgorithmCell(cell, lines, para.protocol, lang)) return;
     }
     if (kind === 'equation') { fillEquationCell(cell, text); return; }
+    // 项目符号列表（`• a • b`）→ 渲染成 <ul><li>，而不是把符号摆出来
+    if (String(text).indexOf('•') >= 0 && fillListCell(cell, text)) return;
     md.richInto(cell, text);
   }
 
