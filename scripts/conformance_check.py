@@ -364,8 +364,20 @@ def check_html(html: str, doc_id: str | None) -> None:
     body_no_script = re.sub(r"<script\b.*?</script>", "", html, flags=re.S | re.I)
     bullets = body_no_script.count("•")
     uls = body_no_script.count("<ul")
-    check("项目符号列表渲染成 <ul><li>（不留 •）", bullets == 0 and uls > 0,
-          f"残留 • {bullets} 处 / <ul> {uls} 个" if bullets else f"<ul> {uls} 个，无残留")
+    # 数据里本来就有条目才要求渲染出 <ul>；没有列表的文档不该因此判失败
+    # （踩过：mock 合成页没有列表，断言 `<ul> > 0` 直接误报）
+    has_lists = False
+    if doc_id:
+        from app import store
+        try:
+            has_lists = any("•" in ((p.get("text") or ""))
+                            for p in store.load_extracted(doc_id)["paragraphs"])
+        except Exception:  # noqa: BLE001
+            has_lists = False
+    ok = bullets == 0 and (uls > 0 or not has_lists)
+    check("项目符号列表渲染成 <ul><li>（不留 •）", ok,
+          f"残留 • {bullets} 处" if bullets else
+          (f"<ul> {uls} 个，无残留" if uls else "本文档没有项目符号列表（跳过）"))
 
     # 术语标记不能出现在表格里
     tbl_html = re.findall(r"<table\b.*?</table>", html, re.S)
