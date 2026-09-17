@@ -503,6 +503,108 @@ def _is_bold(block: dict) -> bool:
 # 而不是继续调吸收带。
 
 
+def _block_plain(block: dict) -> str:
+    """从 `block["lines"]` 取纯文本（这一阶段还没有 `text` 字段）。
+
+    ⚠️ 必须从 lines 取：块在这一步只有 `{"bbox", "lines"}`，
+    用 `b.get("text")` 会一律拿到空串 → "短块"判据对所有块成立 → 整页被并成一团
+    （踩过：第一页的标题、摘要直接消失）。
+    """
+    parts: list[str] = []
+    for ln in (block.get("lines") or []):
+        parts.append("".join(str(sp.get("text") or "") for sp in (ln.get("spans") or [])))
+    return " ".join(x for x in parts if x).strip()
+
+
+def _merge_same_baseline(blocks: list[dict], page_height: float) -> list[dict]:
+    """把**同一基线上的相邻短块**并成一条逻辑行（论文首页的作者行）。
+
+    作者行在 PDF 里是"每人一个块"横排；不合并的话，按 x 分栏会被拦腰截断
+    （实测第 3、4 位作者被划进右栏）。
+
+    ⚠️ 范围卡得很死：只认**首页顶部 30%** 版面内、≤2 行、≤120 字符的块。
+    放宽到整页会把正文和两栏都搅进去（踩过：首页标题/摘要消失、出现 y 反向的假段落）。
+    """
+    if len(blocks) < 2:
+        return blocks
+
+    def _short(b: dict) -> bool:
+        return (b["bbox"][1] <= page_height * 0.30
+                and len(_block_plain(b)) <= 120
+                and len(b.get("lines") or []) <= 2)
+
+    rest = [b for b in blocks if not _short(b)]
+    shorts = sorted([b for b in blocks if _short(b)],
+                    key=lambda b: (b["bbox"][1], b["bbox"][0]))
+    out: list[dict] = []
+    i = 0
+    while i < len(shorts):
+        group = [shorts[i]]
+        base = shorts[i]["bbox"][1]
+        j = i + 1
+        while j < len(shorts) and abs(shorts[j]["bbox"][1] - base) <= 3.0:
+            gap = shorts[j]["bbox"][0] - max(b["bbox"][2] for b in group)
+            if -2 <= gap <= 40:          # 水平方向要挨着，否则是两条无关的行
+                group.append(shorts[j])
+                j += 1
+            else:
+                break
+        # 机构行：作者名下面**紧挨着**还有一个小块（`UC Berkeley`）——
+        # 它不是独立的一行，而是上面那位作者的机构，挂成 `名字 (机构)`
+        # （标准答案就是 `… Matei Zaharia (UC Berkeley), Raluca Ada Popa (UC Berkeley)`）
+        nametop = max(b["bbox"][3] for b in group)
+        affil: dict[int, list[dict]] = {}
+        k = j
+        while k < len(shorts):
+            b = shorts[k]
+            by0 = b["bbox"][1]
+            if by0 - nametop > 22.0:
+                break
+            owner = None
+            for gi, g in enumerate(group):
+                # 与某位作者横向重叠 → 是它的机构行
+                if b["bbox"][0] >= g["bbox"][0] - 6 and b["bbox"][0] <= g["bbox"][2] + 30:
+                    owner = gi
+                    break
+            if owner is None:
+                break
+            affil.setdefault(owner, []).append(b)
+            k += 1
+        if affil:
+            j = k
+            groups_affil = affil
+        else:
+            groups_affil = {}
+        if len(group) == 1:
+            out.append(group[0])
+        else:
+            group.sort(key=lambda b: b["bbox"][0])
+            parts: list[str] = []
+            lines: list[dict] = []
+            # 排序后要重算 owner 下标（group 刚按 x 排过）
+            for gi, b in enumerate(group):
+                extra = [x for x in groups_affil.get(gi, [])]
+                blines = list(b.get("lines") or []) + [ln for x in extra for ln in (x.get("lines") or [])]
+                if len(blines) >= 2:
+                    # 块内"名字 + 机构"两行 → 名字 (机构)
+                    first = "".join(str(sp.get("text") or "") for sp in (blines[0]["spans"] or []))
+                    tail = " ".join("".join(str(sp.get("text") or "") for sp in (ln["spans"] or []))
+                                    for ln in blines[1:]).strip()
+                    parts.append(first.strip() + " (" + tail + ")")
+                else:
+                    parts.append(_block_plain(b))
+                lines.extend(blines)
+            merged = dict(group[0])
+            merged["lines"] = lines
+            # ⚠️ bbox 必须是 tuple：下游有 `bbox in set` 的查找，list 会 unhashable
+            merged["bbox"] = (min(b["bbox"][0] for b in group), min(b["bbox"][1] for b in group),
+                              max(b["bbox"][2] for b in group), max(b["bbox"][3] for b in group))
+            merged["text_override"] = ", ".join(p for p in parts if p)
+            out.append(merged)
+        i = j
+    return rest + out
+
+
 def _detect_two_column(blocks: list[dict], page_width: float) -> bool:
     if len(blocks) < 4:
         return False
@@ -722,7 +824,10 @@ def extract_pdf(path: str | Path, page_from: int | None = None,
         # （图 1 的 bbox 从 y=155 开始，正是作者行所在的高度），
         # 而合并反而打乱了首页顺序（标题/摘要消失、出现 y 反向的假段落）。
         # 要修得先修"图的区域把上方内容吞进来"这个上游问题。
-        ordered = _order_blocks(combined, rect.width)
+        # ⚠️ pno 是 **1 起算**的（`pno = page.number + 1`）——
+        # 写成 `pno == 0` 永远不会成立、合并静默失效（踩过）
+        src_blocks = (_merge_same_baseline(combined, rect.height) if pno == 1 else combined)
+        ordered = _order_blocks(src_blocks, rect.width)
         merged: list[dict] = []
         for b in ordered:
             if b.get("is_table"):
@@ -733,7 +838,11 @@ def extract_pdf(path: str | Path, page_from: int | None = None,
                                "math_ratio": mathify.math_coverage(b["text"]),
                                "size": body, "bold": False})
                 continue
-            text, math_ratio = _block_markdown(b, body, encodings)
+            if b.get("text_override"):
+                text = b["text_override"]
+                math_ratio = mathify.math_coverage(text)
+            else:
+                text, math_ratio = _block_markdown(b, body, encodings)
             if not text:
                 continue
             rec = {

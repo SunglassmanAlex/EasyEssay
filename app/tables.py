@@ -752,6 +752,13 @@ def _extend_up_for_labels(page: Any, area: dict,
                 continue
             if not looks_like_figure_label(text):
                 continue
+            # ⚠️ 必须是**紧贴**图上沿的块才吸收。
+            # 原来只判"在 x 范围内、在 max_up 以内"，而循环会连锁向上扩
+            # —— Compass 首页那条作者行在图 1 上方 45pt，就这么被吞进图里，
+            # 标准答案的一行四位作者我这边只剩两位（实测）。
+            # 图例是紧贴着图框画的（通常几 pt），给一行行高的余量足够。
+            if top - by1 > 18.0:
+                continue
             top = by0
             changed = True
     return top
