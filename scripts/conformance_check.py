@@ -360,6 +360,13 @@ def check_html(html: str, doc_id: str | None) -> None:
               f"第 {first_bad + 1} 个元素是 {seq[first_bad]}（顺序不对）"
               if first_bad is not None else f"{len(seq)} 个元素顺序正确")
 
+    # 图框里不得出现"刻度碎片"行（`3 3`、`7 7 4 4`、`0.4 0.4`）——
+    # 那是图表刻度被切碎的结果，标准答案里一条都不保留（用户截图报的就是这个）。
+    junk = re.findall(r'<div class="fline">\s*([\d.]+(?:\s+[\d.]+)+)\s*</div>',
+                      re.sub(r"<script\b.*?</script>", "", html, flags=re.S | re.I))
+    check("图框里没有刻度碎片（`3 3` 这种乱码行）", not junk,
+          f"{len(junk)} 行：{junk[:3]}" if junk else "无")
+
     # 项目符号列表：标准答案里**全文没有 `•`**，条目一律进 <ul><li>
     body_no_script = re.sub(r"<script\b.*?</script>", "", html, flags=re.S | re.I)
     bullets = body_no_script.count("•")

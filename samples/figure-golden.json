@@ -1,0 +1,88 @@
+{
+  "_说明": [
+    "图的『标准件』——按 E:/Workbench/store/密码学论文阅读/Compass-Encrypted-Semantic-Search-中英对照.html 逐字对齐。",
+    "用途：① 作为 app 算法的目标形状（prompt / schema / 渲染都按这个来）；② 作为自检的对照基准。",
+    "",
+    "规则（从标准答案反推出来的）：",
+    "  1. figcap = 图题**整段**译文（含括号里的补充说明，不是只取第一句）；",
+    "  2. note(内容) = 图内标签**按语义分组**，每组 `组名：项 · 项 · 项。`，组与组之间 <br>；",
+    "     每一项写成『English（中文）』；组名如 子图 / 图例 / 分面（按数据集）/ 参数区间；",
+    "  3. 纯数字刻度碎片（`3 3`、`7 7 4 4`、`0.4 0.4`、`1.0 1.0`）**一律丢弃**；",
+    "  4. 柱状图例外：柱上标注的数值**按组按数据集整理**后列在 `图中标注的数值：` 一行里；",
+    "  5. note(译注) = 〔译注：原文此处是什么图、保留了什么、数值是不是图中标注值〕；",
+    "  6. 图内**成句**文字（检索结果那种）不进图框，按普通正文行渲染。"
+  ],
+  "doc": "20260916-141631-compass-encrypted-semantic-search-with-h-99cd",
+  "figures": {
+    "Figure 1": {
+      "tiny": {"en": "Figure 1 (search-result box)", "zh": "图 1（检索结果框）"},
+      "figcap_zh": "图 1：使用流行工具 TF-IDF 的关键词搜索与在 MS MARCO 数据集上的语义搜索的 top-1 结果对比示例。关键词搜索结果被“social security numbers”这一短语的词频带偏，错过了问题真正想问的含义，而语义搜索给出了更准确的答案。",
+      "groups": [],
+      "note_zh": "〔译注：原文此处为一个检索结果框，把关键词搜索与语义搜索的 top-1 结果并排展示。框内结果文本已按正文行完整译出，此处保留图题。〕",
+      "sentences_to_body": true
+    },
+    "Figure 2": {
+      "tiny": {"en": "Figure 2 (diagram: Compass Architecture)", "zh": "图 2（示意图：Compass 架构）"},
+      "figcap_zh": "图 2：Compass 架构。",
+      "groups": [
+        {"label": "图例", "items": ["Query Embedding（查询向量）", "Compass Model（Compass 模型）", "Untrusted（不可信区域）", "Result Storage（结果存储）", "Search ORAM（搜索 ORAM）", "Index Controller（索引控制器）", "Client（客户端）", "Network Server（网络服务器）"]}
+      ],
+      "note_zh": "〔译注：原文此处为 Compass 系统架构示意图，展示客户端经搜索 ORAM 与索引控制器访问模型与结果存储的流程，并标出不可信区域。图中无文字参数，此处保留图题与图例。〕"
+    },
+    "Figure 3": {
+      "tiny": {"en": "Figure 3 (diagram: HNSW Graph)", "zh": "图 3（示意图：HNSW 图）"},
+      "figcap_zh": "图 3：HNSW 图。",
+      "groups": [
+        {"label": "图例", "items": ["Visited Node（已访问节点）", "Best Match（最佳匹配）", "Search Path（搜索路径）", "Edge（边）", "Query Node（查询节点）", "Entry Node（入口节点）"]}
+      ],
+      "note_zh": "〔译注：原文此处为一幅 HNSW 多层图示意，含图例六项：已访问节点、最佳匹配、搜索路径、边、查询节点、入口节点。图中无文字参数，此处仅保留图题与图例。〕"
+    },
+    "Figure 4": {
+      "tiny": {"en": "Figure 4 (security game box)", "zh": "图 4（安全博弈框）"},
+      "figcap_zh": "图 4：Compass 的安全博弈。",
+      "protocol": true,
+      "note_zh": "〔译注：原文此处为安全博弈的形式化定义框，四条规则已按编号步骤整理。〕"
+    },
+    "Figure 5": {
+      "tiny": {"en": "Figure 5 (diagram: HNSW traversal and our techniques)", "zh": "图 5（示意图：HNSW 遍历与我们的技术）"},
+      "figcap_zh": "图 5：HNSW 图遍历，以及我们面向 ORAM 的遍历技术。搜索的目标是找出离 Query 最近的节点（Nearest Node）。此处距离为欧氏距离。图中的数字表示遍历的迭代轮次，以及每一轮处理了哪些节点。我们称一个节点被“处理”，是指它的邻居被访问了。",
+      "groups": [
+        {"label": "子图", "items": ["(a) Classical（经典）", "(b) Directional Neighbor Filtering（方向性邻居过滤）", "(c) Speculative Neighbor Prefetch（推测式邻居预取）", "(d) Combine（两者结合）"]},
+        {"label": "图例", "items": ["Entry Node（入口节点）", "Candidate Node（候选节点）", "Visited Node（已访问节点）", "Query（查询）", "Unvisited Node（未访问节点）", "Nearest Node（最近节点）"]}
+      ],
+      "note_zh": "〔译注：原文此处为四幅并排的遍历过程示意（a–d），图中节点编号 1–7 表示迭代轮次。此处保留图题与图例，正文中与各子图对应的文字说明已完整译出。〕",
+      "drop": ["3 3", "7 7 4 4", "2 2 2 2", "5 5 3 3", "4 4 2 2", "1 1 1 1", "6 6 3 4 3 4"]
+    },
+    "Figure 6": {
+      "tiny": {"en": "Figure 6 (plot: quality vs. latency)", "zh": "图 6（曲线图：质量–延迟对比）"},
+      "figcap_zh": "图 6：Compass 的搜索质量与延迟相对于各 Baselines 的比较。对于 TripClick，HE-Cluster 在两种网络下的结果重叠在一起，因为主要瓶颈是服务器端计算。HE-Cluster 在 MS MARCO 上的搜索延迟是外推得到的（受内存限制，见 §6.3.3 的内存占用估计）。",
+      "groups": [
+        {"label": "子图（按数据集）", "items": ["LAION", "SIFT1M", "TripClick", "MS MARCO"]},
+        {"label": "坐标轴", "items": ["横轴 Latency (s)（延迟，秒）", "纵轴 MRR@10"]},
+        {"label": "图例", "items": ["Plaintext-HNSW fast / slow（明文 HNSW，快/慢）", "Compass fast / slow", "HE-Cluster fast / slow", "Inv-ORAM fast / slow", "BM25", "TF-IDF", "Emed. Brute Force（嵌入暴力搜索）"]}
+      ],
+      "note_zh": "〔译注：原文此处为四条 MRR@10–延迟曲线（按数据集分面），无表格数值。此处保留图题与图例。〕",
+      "drop": ["0.4 0.4", "1.0 1.0", "0.3 0.3", "MRR@10 0.8 0.8", "0.2 0.2", "0.6 0.6", "0.1 0.1", "Plaintext-HNSW slow Compass slow HE-Cluster slow Inv-ORAM slow TF-IDF"]
+    },
+    "Figure 7": {
+      "tiny": {"en": "Figure 7 (plot: latency breakdown)", "zh": "图 7（柱状图：延迟分解）"},
+      "figcap_zh": "图 7：Compass 搜索延迟的分解。SH 表示半诚实（semi-honest），Mal 表示恶意（malicious）。",
+      "groups": [
+        {"label": "子图", "items": ["fast - Latency (s)（快速组延迟，单位秒）", "slow - Latency (s)（慢速组延迟，单位秒）"]},
+        {"label": "图例", "items": ["Perceived Latency - SH.（感知延迟，半诚实）", "Full Latency - SH.（完整延迟，半诚实）", "Perceived Latency - Mal.（感知延迟，恶意）", "Full Latency - Mal.（完整延迟，恶意）"]},
+        {"label": "图中标注的数值（LAION / SIFT1M / TripClick / MS MARCO）", "items": ["fast 组 0.02 / 0.04 / 0.03 / 0.08 与 0.02 / 0.04 / 0.04 / 0.10", "slow 组 0.06 / 0.28 / 0.14 / 0.48 与 0.09 / 0.47 / 0.23 / 0.86", "slow 组（另一组）0.57 / 0.59 / 0.58 / 0.60 与 0.84 / 0.87 / 0.85 / 0.92"]}
+      ],
+      "note_zh": "〔译注：原文此处为柱状图，上述数值为图中各柱的标注值，按原文顺序照录；具体对应关系以原图为准。〕"
+    },
+    "Figure 8": {
+      "tiny": {"en": "Figure 8 (plot: ablation study)", "zh": "图 8（曲线图：消融研究）"},
+      "figcap_zh": "图 8：Compass 各项技术的消融研究。每个箭头表示参数值减小的方向。",
+      "groups": [
+        {"label": "分面（按数据集）", "items": ["LAION", "SIFT1M", "TripClick", "MS MARCO"]},
+        {"label": "参数区间", "items": ["LAION 的 $efn:[1,128]$、$efspec:[1,8]$", "SIFT1M 的 $efn:[1,128]$、$efspec:[1,8]$", "TripClick 的 $efn:[1,256]$、$efspec:[1,16]$", "MS MARCO 的 $efn:[1,256]$、$efspec:[1,16]$"]},
+        {"label": "图例", "items": ["Compass", "Compass w/o Lazy Eviction（去掉惰性驱逐）", "Compass w/ vanilla Ring ORAM（换用原始 Ring ORAM）"]}
+      ],
+      "note_zh": "〔译注：原文此处为消融研究曲线图（按数据集分面），图中数值为坐标轴刻度与曲线标注值，无表格数值。此处保留图题、分面与图例。〕"
+    }
+  }
+}

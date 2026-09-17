@@ -427,19 +427,52 @@
    * 图是纯图形时显示模型写的译注（〔译注：原文此处为一幅…〕）——
    * 这样读者知道"这里原本有一张图、它是关于什么的"，而不是一片空白。
    */
+  /** 一行文字是不是"刻度碎片"（`3 3`、`7 7 4 4`、`0.4 0.4`、`1.0 1.0`）。
+   *
+   * 这些是图表刻度被切碎的结果，标准答案里**一条都不保留** ——
+   * 摆出来就是一屏乱码（用户截图里的 `3 3 / 7 7 4 4 / 2 2 2 2 …`）。
+   * 判据：只由数字/小数/空白组成，且没有成句的词。带字母的一律不算碎片。
+   */
+  function isTickJunk(line) {
+    var t = String(line || '').trim();
+    if (!t) return true;
+    if (/[A-Za-z\u4e00-\u9fff]/.test(t)) return false;   // 有字母/汉字 → 不是纯刻度
+    return /^[\d.\s,\-–—:/()]+$/.test(t);                // 只剩数字与标点 → 碎片
+  }
+
   function fillFigureCell(cell, fig, para0_note) {
     if (!fig || !fig.caption) return false;
     var box = el('div', 'figbox');
-    (fig.content || []).forEach(function (line) {
-      var d = el('div', 'fline');
-      d.textContent = line;
-      box.appendChild(d);
-    });
-    // 图上的标签（坐标轴刻度、图例）：弱化展示，**不翻译**（规格 §5）
-    if (fig.labels && fig.labels.length) {
-      var lab = el('div', 'figlabels');
-      lab.textContent = fig.labels.join(' · ');
-      box.appendChild(lab);
+    var groups = fig.groups || [];
+    if (groups.length) {
+      // 标准件形状：图内文字按**语义分组**排，每项『English（中文）』，
+      // 组间 <br> —— 与参照成品稿的 `.note` 一模一样。
+      var gn = el('div', 'note');
+      gn.innerHTML = groups.map(function (g) {
+        var items = (g.items || []).map(function (x) { return md.inlineMd(String(x)); });
+        return md.esc(g.label) + '：' + items.join(' · ') + '。';
+      }).join('<br>');
+      box.appendChild(gn);
+    } else {
+      // 没有分组（老数据 / 图内是成句文字）：按行渲染，但**滤掉刻度碎片**
+      var kept = [];
+      (fig.content || []).forEach(function (line) {
+        if (isTickJunk(line)) return;
+        kept.push(line);
+      });
+      kept.forEach(function (line) {
+        var d = el('div', 'fline');
+        d.textContent = line;
+        box.appendChild(d);
+      });
+      // 图上的标签（坐标轴刻度、图例）：弱化展示，**不翻译**（规格 §5）
+      if (fig.labels && fig.labels.length) {
+        var lab = el('div', 'figlabels');
+        lab.textContent = fig.labels.filter(function (x) {
+          return !isTickJunk(x);
+        }).join(' · ');
+        if (lab.textContent) box.appendChild(lab);
+      }
     }
     // 译注：本侧没有就用另一侧带过来的（参照稿左右各一份）
     var noteText = fig.note || para0_note;

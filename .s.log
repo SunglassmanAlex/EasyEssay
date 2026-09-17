@@ -1,0 +1,64 @@
+尺寸: (2560, 1458)
+墨迹行: (np.int64(0), np.int64(1457))
+OCR 61 段：
+  y=  129 x=   54  对照
+  y=   34 x=   59  ←文档库
+  y=  355 x=  111  56
+  y=  435 x=  122  p.6
+  y=  239 x=  127  p.6Figure 5 (reproduced)
+  y= 1351 x=  129  p.6
+  y=  127 x=  162  仅原文
+  y= 1344 x=  173   Instead, we propose a novel way to traverse the HNSW graph designed for running on top
+  y=  423 x=  181  公式已重建
+  y= 1401 x=  182  of ORAM. Our traversal approach significantly reduces round trips and bandwidth usage
+  y=  337 x=  191  - page 5 ends : page 6 begins -
+  y=  498 x=  206  33
+  y=  594 x=  206  2 222
+  y=  546 x=  207  774 4
+  y=  642 x=  207  5 5 3 3
+  y=  689 x=  207  4 4 2 2
+  y=  787 x=  207  6 6 3434
+  y= 1221 x=  207  processed, if its neighbors are visited.
+  y=   35 x=  208  EasyEssay Compass:Encrypted Semantic Search with High Accuracy24页·381段·已译 381段·左栏重建 381段·完成：381/
+  y=  739 x=  208  11 1 1
+  y=  833 x=  208  a) Classical b) Directional Neighbor Filtering c) Speculative Neighbor Prefetch d) Combine
+  y= 1179 x=  209  iterations in the traversal, and which nodes are processed at each iteration. We say that a node
+  y= 1094 x=  211  Figure 5: HNSW graph traversal followed by our ORAM-friendly traversal techniques. The search ai
+  y= 1137 x=  211  identify the Nearest Node to the Query. The distance here is Euclidean distance. The numbers ind
+  y= 1021 x=  235  以原图为准。」
+  y=  937 x=  237  性邻居过滤、推测性邻居预取以及二者组合四种方案；图中节点附近的数字表示迭代轮次（同
+  y=  980 x=  238  一轮可能处理多个节点），图内文字a)-d）为子图标题，已译出；具体节点位置与数字对应关系
+  y=  894 x=  249  【译注：原文此处为四幅并排的HNSW图遍历过程示意图（a-d），分别对应经典遍历、方向
+  y=  127 x=  297  仅译文
+  y=  129 x=  433  目录
+  y=  128 x=  539  原始抽取
+  y=  129 x=  700  参考文献
+  y=  133 x=  860  A-
+  y=  132 x=  942  A+
+  y=  126 x= 1029  字体
+  y=  128 x= 1140  明/暗
+  y=  129 x= 1256  重新翻译
+  y= 1397 x= 1392  遍历方法通过三项技术显著减少了往返次数和带宽占用。前两项技不
+  y=  236 x= 1394  图5(完整复现)
+  y=  459 x= 1416  33
+  y=  507 x= 1417  7744
+  y=  603 x= 1417  5 5 3 3
+  y=  130 x= 1418  重建左栏
+  y=  557 x= 1418  2 22 2
+  y=  650 x= 1418  4 4 2 2
+  y=  700 x= 1419  1 111
+  y=  749 x= 1420  6 6 3434
+  y=  794 x= 1421  a)经典方法b)方向性邻居过滤c)推测性邻居预取d)组合方法
+  y= 1138 x= 1421  轮处理了哪些节点。若一个节点的邻居被访问，我们就说该节点被处理了。
+  y= 1054 x= 1422  图5：HNSW图遍历以及我们为ORAM友好的遍历技术所采用的后续遍历方式。搜索的目标
+  y= 1097 x= 1422  是找到距离查询最近的节点。这里的距离是欧氏距离。数字表示遍历中的迭代轮次，以及每一
+  y=  985 x= 1445  对应关系以原图为准。」
+  y=  899 x= 1448  向性邻居过滤、推测性邻居预取以及二者组合四种方案；图中节点附近的数字表示迭代轮次
+  y=  335 x= 1453  原文第5页结束·第6页开始
+  y=  856 x= 1461  【译注：原文此处为四幅并排的HNSW图遍历过程示意图（a-d），分别对应经典遍历、方
+  y=  941 x= 1462  (同一轮可能处理多个节点），图内文字a)-d)为子图标题，已译出；具体节点位置与数字
+  y=  128 x= 1578  导出 HTML
+  y=  129 x= 1764  原始 PDF
+  y=  127 x= 1923  打印
+  y=  128 x= 2032  问 AI
+  y= 1378 x= 2327  切换深/浅色

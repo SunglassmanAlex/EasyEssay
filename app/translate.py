@@ -32,9 +32,29 @@ OUTPUT_SPEC = r"""
 - **kind 为 `figure` 的段落是图**：输入给的是 `figure.caption`（图题）、
   `figure.content`（图内文字，可能为空数组）与 `figure.labels`（图上标签：坐标轴刻度、
   图例、子图标题 —— 这些**不翻译**，但你要看它们来写译注）。
-  返回 `"figure": {"caption": "图题译文", "content": [...], "note": "..."}`；
+  返回 `"figure": {"caption": "图题译文", "content": [...], "groups": [...], "note": "..."}`；
+  `caption` 要**整段**译完（括号里的补充说明也要），不要只取第一句；
   **`caption` 必须有**（`Figure 1:` 译成 `图 1：`）；
   `content` 是图里**成句的文字**（示意框里的词、检索结果文本），逐条翻译，允许重新断行；
+  **`groups` 是图内文字的正文**：把图内标签**按语义分组**，每组给出
+  `label`（组名）与 `items`（条目数组），**每一项写成「English（中文）」**，例如
+  `{"label": "子图", "items": ["(a) Classical（经典）", "(b) Directional Neighbor Filtering（方向性邻居过滤）"]}`、
+  `{"label": "图例", "items": ["Entry Node（入口节点）", "Best Match（最佳匹配）"]}`。
+  常用组名：`子图`、`图例`、`分面（按数据集）`、`参数区间`、`坐标轴`、`图中标注的数值（LAION / SIFT1M / …）`。
+  **`items` 只收有意义的标签/文字/数值组**；
+  ⚠️ **纯数字或刻度碎片（`3 3`、`7 7 4 4`、`0.4 0.4`、`1.0 1.0` 这种空格分隔的孤立数字）
+  一律不要收进来** —— 它们是图表刻度被切碎的结果，收进去只会变成一堆乱码。
+  唯一的例外是**柱状图柱上的标注值**：这种要**按组、按数据集整理成有序的一行**
+  （如 `fast 组 0.02 / 0.04 / 0.03 / 0.08`），放进 `图中标注的数值（…）` 组里；
+  分不清就不收（宁可少写，不要堆数字）。
+  `groups` 里没有可收的内容时给空数组 `[]`；
+  ⚠️ **短标签（不是成句的文字）一律进 `groups`，不要留在 `content` 里** ——
+  图例项（`Entry Node`、`Visited Node`）、架构部件名（`Model`、`Result Storage`）、
+  子图标题（`(a) Classical`）都属此类；`content` 只留给**成句的文字**
+  （比如检索结果框里的整句话）。
+  ⚠️ **不需要翻译的项只写一次**：专有名词/数据集名/模型名（`LAION`、`SIFT1M`、`Compass`、
+  `MRR@10`、`Latency (s)`）直接写原文即可，**不要写成** `LAION（LAION）` 这种重复。
+
   **`note` 每一幅图都必须写**（硬要求，不是可选项）—— 一条译注告诉读者
   "原文这里是什么图、表达了什么"，例如：
   · 示意图：`〔译注：原文此处为四幅并排的遍历过程示意（a–d），图中节点编号 1–7 表示迭代轮次。此处保留图题与图例。〕`
@@ -217,6 +237,22 @@ def figure_for_prompt(fig: dict) -> dict:
             "labels": [str(x) for x in (fig.get("labels") or [])]}
 
 
+
+def _dedup_pair(item: str) -> str:
+    """`LAION（LAION）` → `LAION`：专有名词/数据集名不该写成"原文（原文）"。
+
+    参照成品稿里这类项只写一次（`LAION`、`Compass`、`MRR@10`）。
+    ⚠️ 用**确定性规则**而不是提示词：提示词里写了两遍，模型照样会这么写（实测），
+    而这种重复一眼可见、字符串一比就能去掉，交给规则更可靠。
+    """
+    m = re.match(r"^(.*?)[（(](.*?)[）)]$", item.strip())
+    if not m:
+        return item.strip()
+    left, right = m.group(1).strip(), m.group(2).strip()
+    if left and right and left.lower() == right.lower():
+        return left
+    return item.strip()
+
 def apply_figure(fig: dict, translated: Any) -> dict | None:
     """套回模型返回的图块。
 
@@ -231,12 +267,24 @@ def apply_figure(fig: dict, translated: Any) -> dict | None:
     content = translated.get("content")
     if not isinstance(content, list):
         content = [str(x) for x in (fig.get("content") or [])]
+    # 语义分组（标准件的形状）：[{label, items:[...]}]，items 必须是字符串数组
+    groups: list[dict] = []
+    for g in (translated.get("groups") or []):
+        if not isinstance(g, dict):
+            continue
+        label = str(g.get("label") or "").strip()
+        items = [_dedup_pair(str(x).strip()) for x in (g.get("items") or []) if str(x).strip()]
+        items = [x for x in items if x]
+        if label and items:
+            groups.append({"label": label, "items": items})
+
     note = str(translated.get("note") or "").strip()
     if not note:
         # 译注是硬要求（参照稿每幅图都有）：没有就判失败，让这一轮重试
         return None
     return {"caption": caption,
             "content": [str(x).strip() for x in content if str(x).strip()],
+            "groups": groups,
             "note": note}
 
 
@@ -843,6 +891,11 @@ def _is_stale(para: dict, rec: dict) -> bool:
             return True
         # 缺译注也算失效：译注是硬要求，缺了要补（参照稿每幅图都有一条）
         if not (rec.get("figure") or {}).get("note"):
+            return True
+        # 缺「语义分组」也算失效（标准件形状）：图内有内容就必须有 groups 字段，
+        # 让老数据重跑一次拿到分组，把刻度碎片换掉。
+        fig = rec.get("figure") or {}
+        if en and "groups" not in fig:
             return True
         return False
     return False
