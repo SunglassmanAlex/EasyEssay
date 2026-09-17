@@ -481,6 +481,28 @@ def _is_bold(block: dict) -> bool:
     return bool(re.search(r"(bold|black|heavy|semibold|bx|CMB)", names, re.I))
 
 
+
+# ---------------------------------------------------------------- 已知问题（未修）
+#
+# **首页作者行被图吞掉**：Compass 首页的作者行在 PDF 里是 4 个并排的小块
+# （`Jinhao Zhu / UC Berkeley` 等，y=155，x=106~506），横跨两栏。实测：
+#   * 第 1、2 位作者进了左栏 → 合成一段 `Jinhao Zhu UC Berkeley Liana Patel …`；
+#   * 第 3、4 位作者落在右栏的 x 范围内 → 被**图 1 的区域**吸收
+#     （图 1 的 bbox 从 y=155 开始，正是作者行的高度）；
+#   * 结果标准答案里的一行四位作者，我这边只剩两位、且顺序错乱。
+#
+# 试过"把同一基线上的并排短块并成一条再分栏"，**没解决** —— 因为作者块在更早的
+# 环节就已被图区域吞掉，而合并反而打乱首页顺序（标题/摘要消失、出现 y 反向的假段落），
+# 已回退。要修得先修上游："图的区域把上方很远的文字块也圈进来了"。
+# 判据应当是：图的区域只吸收**与图内图形/题注纵向相邻**的块，而不是同一个 x 带里的全部。
+#
+# 2026-09-17 补测：把"图内标签吸收带"从"图题上方 430pt"收紧到"图的区域顶 -20pt"之后，
+# 图 1 的 bbox **仍然**是 y=155-409（从作者行的高度开始）—— 说明这个 bbox 不是吸收带
+# 造成的，而是 `tables.extract_figures` 内部的区域聚类把作者块算进了图。
+# 下一步应查 `app/tables.py` 的区域构造（`_regions` / `figure_area` 的输入），
+# 而不是继续调吸收带。
+
+
 def _detect_two_column(blocks: list[dict], page_width: float) -> bool:
     if len(blocks) < 4:
         return False
@@ -693,6 +715,13 @@ def extract_pdf(path: str | Path, page_from: int | None = None,
              "caption": tb.get("caption", ""), "lines": []}
             for tb in tables
         ]
+        # 先并"同一基线上的相邻短块"（论文首页的作者行就是 4 个并排的小块），
+        # 再按分栏排序 —— 否则它们会被按 x 坐标切进左右两栏，并与同页的图粘在一起。
+        # ⚠️ `_merge_same_baseline`（把首页作者行那几个并排小块并成一条）**暂时不启用**：
+        # 实测它解决不了问题 —— 作者块在更早的环节就被图 1 的 bbox 吞掉了
+        # （图 1 的 bbox 从 y=155 开始，正是作者行所在的高度），
+        # 而合并反而打乱了首页顺序（标题/摘要消失、出现 y 反向的假段落）。
+        # 要修得先修"图的区域把上方内容吞进来"这个上游问题。
         ordered = _order_blocks(combined, rect.width)
         merged: list[dict] = []
         for b in ordered:
@@ -766,7 +795,13 @@ def extract_pdf(path: str | Path, page_from: int | None = None,
             # 图的 bbox 顶是"第一个子图的框"，而图例往往在那之上
             # （实测图框顶 y=82、图例 y=72 —— 锚错了就差 10pt 全漏）
             base = tb["bbox"][3]
-            band_lo, band_hi = base - 430.0, base + 2.0
+            # ⚠️ 区带的上界必须**贴着图自己的区域顶**，不能是一个大常数。
+            # 早先用 `base - 430`（图题上方 430pt）—— 太宽：Compass 首页那条作者行
+            # 在图 1 上方 250pt 处，也被当成"图内标签"吸走了，
+            # 标准答案里一行四位作者，我这边只剩两位（第 3、4 位被图吞了）。
+            # 图例/刻度本来就落在这个区域里，不需要那么大的余量，留 20pt 足够。
+            band_lo = max(tb["bbox"][1] - 20.0, base - 430.0)
+            band_hi = base + 2.0
             for b in merged:
                 if b.get("is_table") or b.get("bbox") in absorbed_captions:
                     continue
