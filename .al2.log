@@ -1,0 +1,39 @@
+我 382 行中，能在参照稿找到对应（≥85% 相似）的：253 行 = 66%
+
+=== 我对不上的 129 行（前 20）===
+   [brow head] Jinhao Zhu UC Berkeley Liana Patel Stanford University
+   [brow] Matei Zaharia Raluca Ada Popa
+   [brow] difficult to deploy such different trust domains [26,73], and attackers can still compromise
+   [brow] In this work, through our system Compass, we show that one can achieve the best of both worl
+   [brow] While the idea of combining a graph-based index with ORAM is alluring, the main challenge li
+   [brow] Query Embedding
+   [brow] Query Node
+   [brow] We chose Ring ORAM [101], a follow-up to Path ORAM, for Compass because Ring ORAM has low ba
+   [brow] To access a block [M] in Ring ORAM, the client first checks the position map to find the pat
+   [brow] Compass’s APIs are as follows: • INIT [M] : Given a set of documents [M] , initialize the in
+   [brow] Our system is based on a two-party model: a client and a (logical) server. The logical serve
+   [brow] Compass does not hide the type of operation, whether a user is performing a search, insert, 
+   [brow] 图 4：Compass 的安全博弈
+   [brow] of results. Like much prior work [51, 83, 126], Compass does not protect against DoS attacks
+   [brow] Symbol Description [M] degree bound of traversed nodes in HNSW search [M] size of dynamic ca
+   [brow] To understand our approach, it helps to first consider an attempt to reduce the number of se
+   [brow] 3 3
+   [brow] In speculative execution [66], the processor makes guesses of potentially useful instruction
+   [brow] To reduce the cost of an HNSW traversal, or more generally a graph traversal, Compass optimi
+   [brow] As mentioned in §4.1, each block in our ORAM stores both a node's embedding and its neighbor
+
+=== 参照稿有、我这边没有对应（113 行，前 14）===
+   [-] Jinhao Zhu (UC Berkeley), Liana Patel (Stanford University), Matei Zaharia (UC Berkeley), Ra
+   [tiny] Figure 1 (search-result box)
+   [-] Meaning of social security numbers?
+   [-] In this work, through our system Compass, we show that one can achieve the best of both worl
+   [-] Compass is designed for scenarios where a user wishes to privately search over their own con
+   [-] While the idea of combining a graph-based index with ORAM is alluring, the main challenge li
+   [pbreak] — page 2 ends · page 3 begins —
+   [tiny] Figure 3 (diagram: HNSW Graph)
+   [-] Figure 3: HNSW Graph · legend: Visited Node · Best Match · Search Path · Edge · Query Node ·
+   [-] We chose Ring ORAM [101], a follow-up to Path ORAM, for Compass because Ring ORAM has low ba
+   [-] ReadPath( $l$ , $a$ ): Unlike Path ORAM, Ring ORAM reads only one block, the target block $a
+   [-] To access a block $a$ in Ring ORAM, the client first checks the position map to find the pat
+   [-] Compass’s APIs are as follows:
+   [-] INIT( $D$ ): Given a set of documents $D$, initialize the index. SEARCH( $Q$ , $K$ ) → LIST(

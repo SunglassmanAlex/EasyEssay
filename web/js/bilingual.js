@@ -334,8 +334,30 @@
    * 模型偶尔偷懒（把 17 步压成 3 句）：后端有验收闸门拦着，
    * 拦不住就退回按行渲染（见 fillAlgorithmCell 的兜底）。
    */
-  function fillProtocolCell(cell, proto) {
-    if (!proto || !proto.steps || !proto.steps.length) return false;
+  function fillProtocolCell(cell, proto, lang) {
+    if (!proto) return false;
+    // 英文栏：放**原文**那几条（编号 + 原句），用按行渲染保持原样。
+    // 协议的结构化步骤是中文的 —— 直接摆到英文栏会串味
+    // （实测英文栏里出现过「图 4：Compass 的安全博弈」）。
+    if (lang === 'en') {
+      var enLines = proto.lines_en || [];
+      if (!enLines.length && !proto.title_en) return false;
+      var ebox = el('div', 'proto');
+      if (proto.title_en) {
+        var et = el('div', 'pt');
+        et.textContent = proto.title_en;
+        ebox.appendChild(et);
+      }
+      enLines.forEach(function (ln) {
+        var d = document.createElement('div');
+        d.className = 'algline';
+        d.textContent = ln;
+        ebox.appendChild(d);
+      });
+      cell.appendChild(ebox);
+      return true;
+    }
+    if (!proto.steps || !proto.steps.length) return false;
     var box = el('div', 'proto');
     if (proto.title) {
       var t = el('div', 'pt');
@@ -372,9 +394,9 @@
     return true;
   }
 
-  function fillAlgorithmCell(cell, lines, proto) {
+  function fillAlgorithmCell(cell, lines, proto, lang) {
     // 优先用第二轮整理好的结构化协议；没有（或偷懒被闸门拦下）就按行渲染
-    if (fillProtocolCell(cell, proto)) return true;
+    if (fillProtocolCell(cell, proto, lang)) return true;
     if (!lines || !lines.length) return false;
     var box = el('div', 'algobox');
     var start = 0;
@@ -441,13 +463,13 @@
     cell.appendChild(d);
   }
 
-  function fillCell(cell, para, kind) {
+  function fillCell(cell, para, kind, lang) {
     var text = para.text || '';
     if (kind === 'figure') {
       // ⚠️ 顺序要紧：**协议框优先**。安全游戏那种"图"其实是规则条目，
       // 参照稿把它渲染成 `.proto` + 编号步骤；而图框分支一旦先 return，
       // 协议分支就永远走不到（实测导出里 `.proto` 一直是 0）。
-      if (para.protocol && fillProtocolCell(cell, para.protocol)) return;
+      if (para.protocol && fillProtocolCell(cell, para.protocol, lang)) return;
       var fig = para.figure;
       if (fig && fig.caption && fillFigureCell(cell, fig, para.figureNote)) return;
     }
@@ -461,7 +483,7 @@
     }
     if (kind === 'algorithm') {
       var lines = (para.algorithm && para.algorithm.lines) || String(text).split('\n');
-      if (fillAlgorithmCell(cell, lines, para.protocol)) return;
+      if (fillAlgorithmCell(cell, lines, para.protocol, lang)) return;
     }
     if (kind === 'equation') { fillEquationCell(cell, text); return; }
     md.richInto(cell, text);
@@ -610,20 +632,21 @@
                     // 译注在两侧都显示（参照稿的排法）——译文侧带的 note 借给英文侧
                     figureNote: (tr.figure || {}).note || '',
                     protocol: tr.protocol,
-                    algorithm: (state.showRaw ? p.algorithm : (tr.en_algorithm || p.algorithm)) }, kind);
+                    algorithm: (state.showRaw ? p.algorithm : (tr.en_algorithm || p.algorithm)) },
+                   kind, 'en');
         en.dataset.rebuilt = '1';
         en.title = '左栏为「重建原文」（公式已还原为标准 LaTeX）。点顶栏「原始抽取」可切回 PDF 直抽的原始文本。';
         switches.push({ cell: en, para: p, fixed: tr.en, table: p.table,
                        caption: p.caption, figure: tr.en_figure || p.figure,
                        protocol: tr.protocol, algorithm: tr.en_algorithm || p.algorithm });
       } else {
-        fillCell(en, p, kind);
+        fillCell(en, p, kind, 'en');
       }
 
       if (tr.zh) {
         fillCell(zh, { kind: kind, text: tr.zh, table: tr.table, caption: tr.caption,
                       figure: tr.figure, protocol: tr.protocol,
-                      algorithm: tr.algorithm }, kind);
+                      algorithm: tr.algorithm }, kind, 'zh');
         // 术语高亮：**只标译文侧**（规格 §7「把术语标进译文」）、
         // 用**全局术语表**（唯一真源）、且**表格与伪代码内不标**
         // （规格 §7「表格内不标」；伪代码是代码，标了反而干扰）。

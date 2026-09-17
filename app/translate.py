@@ -1139,6 +1139,24 @@ PROTOCOL_SYSTEM = """你是排版助手。下面给你一段**已经翻译好的
 
 # ---------------------------------------------------------------- 2. 哪些块要跑
 
+
+def _protocol_en_source(para: dict) -> tuple[str, list[str]]:
+    """取协议块**原文侧**的标题与行（渲染英文栏用）。
+
+    英文栏必须放原文：协议的结构化步骤是中文的，直接摆到英文栏会串味
+    （实测英文栏里出现过 `图 4：Compass 的安全博弈`）。
+    """
+    kind = para.get("kind")
+    if kind == "algorithm":
+        alg = para.get("algorithm") or {}
+        lines = [str(x) for x in (alg.get("lines") or [])]
+        return (lines[0].strip() if lines else ""), lines
+    if kind == "figure":
+        fig = para.get("figure") or {}
+        return (str(fig.get("caption") or "").strip(),
+                [str(x) for x in (fig.get("content") or [])])
+    return "", []
+
 def _protocol_lines(para: dict, rec: dict) -> tuple[str, list[str]] | None:
     """挑出需要结构化的块，返回 (原始首行/标题, 待整理的行)。
 
@@ -1315,6 +1333,13 @@ def finalize_protocols(doc_id: str, paras: list[dict], st: dict,
             break
         rec = done.get(para["id"]) or {}
         if rec.get("protocol"):
+            # 已有协议但缺英文侧（老数据）：就地补上，不花 API
+            pr = rec["protocol"]
+            if not pr.get("title_en"):
+                en_title, en_lines = _protocol_en_source(para)
+                pr["title_en"] = en_title
+                pr["lines_en"] = en_lines
+                store.merge_translations(doc_id, {para["id"]: {**rec, "protocol": pr}})
             continue
         picked = _protocol_lines(para, rec)
         if not picked:
@@ -1327,6 +1352,9 @@ def finalize_protocols(doc_id: str, paras: list[dict], st: dict,
         floor = max(2, len(lines) // 2) if para.get("kind") == "algorithm" else 2
         proto, why = enrich_protocol(client, title, lines, st, min_steps=floor)
         if proto:
+            en_title, en_lines = _protocol_en_source(para)
+            proto["title_en"] = en_title
+            proto["lines_en"] = en_lines
             store.merge_translations(doc_id, {para["id"]: {**rec, "protocol": proto}})
             n += 1
         else:
