@@ -20,12 +20,13 @@ from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Redirect
 from fastapi.staticfiles import StaticFiles
 
 from . import maintain, mathify, ocr, render, store, translate
-from .config import (DEFAULT_ASK_PROMPT, DEFAULT_SYSTEM_PROMPT, UPLOAD_DIR, WEB_DIR,
+from .config import (APP_VERSION, DEFAULT_ASK_PROMPT, DEFAULT_SYSTEM_PROMPT,
+                     UPLOAD_DIR, WEB_DIR,
                      load_settings, public_settings, save_settings)
 from .deepseek import DeepSeekError, make_client
 from .extract import extract_pdf, extract_with_pdfplumber
 
-app = FastAPI(title="EasyEssay —— 论文翻译助手", version="0.1.0")
+app = FastAPI(title="EasyEssay —— 论文翻译助手", version=APP_VERSION)
 app.add_middleware(
     CORSMiddleware,
     # 只放行两类来源：导出的离线 HTML（file:// 的 Origin 是字符串 "null"，它用 Bearer 令牌访问）

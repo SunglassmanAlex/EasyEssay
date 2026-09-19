@@ -316,8 +316,106 @@ def apply_algorithm_lines(alg: dict, translated: Any) -> dict | None:
     return {"lines": out}
 
 
+
+OUTLINE_SYSTEM = r"""你在为整篇论文做一次**结构清点**（不出译文）。用户会给你一份"结构摘要"：
+按顺序列出每段的编号、类型与开头文字（图表还给题注）。
+
+请只返回一个 JSON：
+{
+  "chapters":  ["1 Introduction", "2 Background", ...],            // 章节标题按出现顺序
+  "figures":   ["Figure 1: ...", ...],                             // 图题（原文即可，不必翻译）
+  "tables":    ["Table 1: ...", ...],
+  "algorithms":["Algorithm 1: ...", ...],
+  "theorems":  ["Theorem 1: ...", "Lemma 1: ...", ...],
+  "terms":     [{"en": "HNSW", "zh": "分层可导航小世界图"}, ...],   // 全文关键术语，最多 60 条
+  "invariants": ["全文页码单调递增", "术语译法全篇一致", ...]        // 你判断出的全局不变式
+}
+
+要求：
+· **只做清点，不要翻译、不要改写**（术语的 zh 除外）；
+· 清单要**完整**：摘要里出现过的图/表/算法/定理编号都要收进来，一个都不能漏；
+· `terms` 只收**需要统一译法的专业术语**，不要收普通词；
+· 拿不准的字段给空数组，不要编造摘要里没有的编号。"""
+
+
+def _outline_digest(paragraphs: list[dict], limit: int = 260) -> list[str]:
+    """把全篇压成"结构摘要"：编号 + 类型 + 开头文字。给清单那一轮用。
+
+    为什么要控制长度：这一步是**一次调用**吃掉整篇的结构，token 要省着用，
+    所以正文只取开头 120 字符（图表给题注全文，因为题注本身就是结构信息）。
+    """
+    lines: list[str] = []
+    for p in paragraphs[:limit]:
+        kind = p.get("kind") or "text"
+        text = (p.get("text") or "").strip()
+        fig = p.get("figure") or {}
+        cap = (p.get("caption") or fig.get("caption") or "").strip()
+        head = cap or " ".join(text.split())[:120]
+        if not head:
+            continue
+        tag = {"heading": "章节", "abstract": "摘要", "figure": "图", "table": "表",
+               "algorithm": "算法", "equation": "公式", "reference": "参考文献"}.get(kind, "正文")
+        lines.append(f"[{p['id']}] {tag}：{head}")
+    if len(paragraphs) > limit:
+        lines.append(f"…（其余 {len(paragraphs) - limit} 段略）")
+    return lines
+
+
+def build_outline(client, paragraphs: list[dict], settings: dict,
+                  doc_id: str = "") -> dict | None:
+    """跑一遍全局清点，返回清单 dict（失败返回 None，不致命）。"""
+    digest = _outline_digest(paragraphs)
+    if not digest:
+        return None
+    messages = [
+        {"role": "system", "content": OUTLINE_SYSTEM},
+        {"role": "user", "content": "这是本文档的结构摘要，请清点并返回 JSON：\n"
+                                    + "\n".join(digest)},
+    ]
+    try:
+        data = client.chat_json(messages, model=settings.get("model"),
+                                temperature=0.0)      # 清点是结构活，温度压到 0
+    except Exception:  # noqa: BLE001
+        return None
+    if not isinstance(data, dict):
+        return None
+    out: dict[str, Any] = {}
+    for k in ("chapters", "figures", "tables", "algorithms", "theorems", "invariants"):
+        arr = data.get(k)
+        if isinstance(arr, list):
+            out[k] = [str(x).strip() for x in arr if str(x).strip()][:80]
+    terms = []
+    for t in (data.get("terms") or []):
+        if isinstance(t, dict) and str(t.get("en") or "").strip():
+            terms.append({"en": str(t["en"]).strip(), "zh": str(t.get("zh") or "").strip()})
+    out["terms"] = terms[:60]
+    if not any(out.values()):
+        return None
+    return out
+
+
+def outline_prefix(outline: dict | None) -> str:
+    """把清单压成一段**固定前缀**（注入每一批的 payload.outline）。"""
+    if not outline:
+        return ""
+    parts: list[str] = []
+    if outline.get("chapters"):
+        parts.append("章节顺序：" + " → ".join(outline["chapters"][:40]))
+    for key, name in (("figures", "图"), ("tables", "表"),
+                      ("algorithms", "算法"), ("theorems", "定理/引理")):
+        if outline.get(key):
+            parts.append(f"{name}清单：" + " | ".join(outline[key][:40]))
+    if outline.get("terms"):
+        parts.append("关键术语（全篇沿用）："
+                     + "、".join(f"{t['en']}→{t['zh']}" for t in outline["terms"][:60]
+                                 if t.get("zh")))
+    if outline.get("invariants"):
+        parts.append("全局不变式：" + "；".join(outline["invariants"][:12]))
+    return "\n".join(parts)
+
 def _build_messages(batch: list[dict], system_prompt: str, target_lang: str,
-                    glossary: list[list[str]], restore_original: bool) -> list[dict]:
+                    glossary: list[list[str]], restore_original: bool,
+                    outline: dict | None = None) -> list[dict]:
     spec = OUTPUT_SPEC if restore_original else OUTPUT_SPEC_NO_RESTORE
     sys = system_prompt.rstrip()
     # 若用户自定义提示词里没提「任务 A」，补一句，避免模型不返回 en
@@ -356,6 +454,14 @@ def _build_messages(batch: list[dict], system_prompt: str, target_lang: str,
     if restore_original:
         payload["note"] = ("输入里的 en 是从 PDF 抽出的原文，数学内容可能是碎的；"
                            "请按数学含义重建为规范 LaTeX 后返回。")
+    # v2 的「两段式」：把全局清单当固定前缀注入每一批 —— 批内的局部视野
+    # 拿不到"全篇有几图几表、页面单调、术语统一"这类**跨批不变式**（建议稿的第 3 条）
+    prefix = outline_prefix(outline)
+    if prefix:
+        payload["document_outline"] = prefix
+        payload["document_outline_note"] = (
+            "这是本文档的全局清单，**始终成立**：术语译法必须与它一致；"
+            "遇到正文引用图/表/算法编号时，按它的编号体系；不得给靠后的段落标更小的页码。")
     if glossary:
         payload["glossary"] = glossary
         payload["glossary_note"] = "以下术语必须沿用既有译法（英文 -> 中文）"
@@ -397,7 +503,8 @@ def _context_window(pool: list[dict], pid: str, radius: int = 1) -> list[dict]:
 
 def _translate_batch(client: DeepSeekClient, batch: list[dict], settings: dict,
                      glossary: list[list[str]],
-                     ctx: list[dict] | None = None) -> tuple[dict, list[dict]]:
+                     ctx: list[dict] | None = None,
+                     outline: dict | None = None) -> tuple[dict, list[dict]]:
     """翻译一批，返回 ({id: {"zh":..,"terms":..,"en":..}}, 新术语)。失败自动二分。
 
     `ctx` 是"整篇段落"的参考池，仅用于严格重试时取邻居当上下文；不给就和 batch 等价。
@@ -407,7 +514,7 @@ def _translate_batch(client: DeepSeekClient, batch: list[dict], settings: dict,
     restore = bool(settings.get("restore_original", True))
     messages = _build_messages(
         batch, settings.get("system_prompt", ""), settings.get("target_lang", "简体中文"),
-        glossary, restore,
+        glossary, restore, outline,
     )
     try:
         data = client.chat_json(
@@ -419,8 +526,10 @@ def _translate_batch(client: DeepSeekClient, batch: list[dict], settings: dict,
         if len(batch) == 1:
             raise
         mid = len(batch) // 2
-        a, ta = _translate_batch(client, batch[:mid], settings, glossary)
-        b, tb = _translate_batch(client, batch[mid:], settings, glossary + ta)
+        a, ta = _translate_batch(client, batch[:mid], settings, glossary,
+                                 outline=outline)
+        b, tb = _translate_batch(client, batch[mid:], settings, glossary + ta,
+                                 outline=outline)
         return {**a, **b}, ta + tb
 
     items = data.get("items") if isinstance(data, dict) else data
@@ -520,7 +629,8 @@ def _translate_batch(client: DeepSeekClient, batch: list[dict], settings: dict,
                 strict["system_prompt"] = (settings.get("system_prompt", "") or "") + STRICT_REPAIR_HINT
                 # 带上前后邻居：只有 ⟦?⟧ 的公式碎片必须靠上下文才可能还原
                 sub, _t = _translate_batch(client, _context_window(ctx or batch, pid),
-                                           strict, glossary, ctx=ctx)
+                                           strict, glossary, ctx=ctx,
+                                           outline=outline)
                 if sub and pid in sub and not _bad(sub[pid], para.get("text") or ""):
                     out[pid] = sub[pid]
                     continue
@@ -534,14 +644,17 @@ def _translate_batch(client: DeepSeekClient, batch: list[dict], settings: dict,
         if len(missing) == len(batch):
             if len(batch) > 1:
                 mid = len(batch) // 2
-                a, ta = _translate_batch(client, batch[:mid], settings, glossary)
-                b, tb = _translate_batch(client, batch[mid:], settings, glossary + ta)
+                a, ta = _translate_batch(client, batch[:mid], settings, glossary,
+                                         outline=outline)
+                b, tb = _translate_batch(client, batch[mid:], settings, glossary + ta,
+                                         outline=outline)
                 return {**a, **b}, new_terms + ta + tb
             raise DeepSeekError("批次翻译返回为空")
         # 只有部分缺失：逐个补
         for p in missing:
             try:
-                sub, _t = _translate_batch(client, [p], settings, glossary)
+                sub, _t = _translate_batch(client, [p], settings, glossary,
+                                           outline=outline)
                 out.update(sub)
             except DeepSeekError:
                 continue
@@ -651,6 +764,21 @@ def translate_document(
         stale = []
     done = store.load_translations(doc_id)
 
+    # v2「两段式」第一段：全局清单（章节顺序 / 图表算法清单 / 关键术语 / 不变式）。
+    # 产出的前缀会注入**每一批**的 payload —— 这是批内视野拿不到的东西。
+    outline = store.load_outline(doc_id)
+    if outline is None:
+        try:
+            if progress:
+                progress({"stage": "outline", "message": "清点全文结构（章节/图表/术语）…",
+                          "done": 0, "total": len(paras)})
+            _client0 = make_client(st)
+            outline = build_outline(_client0, paras, st, doc_id)
+            if outline:
+                store.save_outline(doc_id, outline)
+        except Exception:  # noqa: BLE001
+            outline = None      # 清单失败**不致命**：退回原来的批内策略
+
     def _has_zh(pid: str) -> bool:
         return bool(((done.get(pid) or {}).get("zh") or "").strip())
 
@@ -696,7 +824,8 @@ def translate_document(
                                            "message": "已手动停止"})
                 break
             try:
-                mapping, terms = _translate_batch(client, batch, st, glossary, ctx=paras)
+                mapping, terms = _translate_batch(client, batch, st, glossary, ctx=paras,
+                                                   outline=outline)
                 _update_glossary(glossary, terms)
                 store.merge_translations(doc_id, mapping)
                 completed += len(mapping)

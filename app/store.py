@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import re
 import shutil
 import time
@@ -233,3 +234,28 @@ def source_path(doc_id: str) -> Path | None:
         return None
     p = doc_dir(doc_id) / meta.get("source_file", "")
     return p if p.exists() else None
+
+
+# ---------------------------------------------------------------- 全局清单（v2）
+
+def outline_path(doc_id: str) -> Path:
+    return doc_dir(doc_id) / "outline.json"
+
+
+def load_outline(doc_id: str) -> dict | None:
+    """读全局清单（v2 的"两段式"第一段产物）。没有就返回 None。"""
+    p = outline_path(doc_id)
+    if not p.exists():
+        return None
+    try:
+        data = json.loads(p.read_text(encoding="utf-8"))
+        return data if isinstance(data, dict) else None
+    except Exception:  # noqa: BLE001
+        return None
+
+
+def save_outline(doc_id: str, outline: dict) -> None:
+    p = outline_path(doc_id)
+    tmp = p.with_suffix(".json.tmp")
+    tmp.write_text(json.dumps(outline, ensure_ascii=False, indent=2), encoding="utf-8")
+    os.replace(tmp, p)

@@ -82,6 +82,14 @@ def wait_status(client, doc_id: str, wanted: tuple[str, ...], tries: int = 200,
 def main() -> None:
     tmp = Path(tempfile.mkdtemp(prefix="easyessay-http-"))
 
+    # ⚠️ 环境里可能注入了 DEEPSEEK_API_KEY（CI / 沙箱会这么做），
+    # 而 load_settings 会把环境变量并进来 —— 于是"初始未配置 Key"这条断言
+    # 在注入环境里必然失败（不是代码问题，是环境假失败，踩过）。
+    # 隔离测试要先把这类环境变量摘掉。
+    import os
+    for _k in ("DEEPSEEK_API_KEY", "EASYESSay_API_KEY", "EASYESSay_BASE_URL"):
+        os.environ.pop(_k, None)
+
     import app.config as C
     C.DATA_DIR = tmp
     C.DOCS_DIR = tmp / "docs"
